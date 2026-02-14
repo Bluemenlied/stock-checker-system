@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Stock Inventory Dashboard</h2>
+            {% if current_file %}
+            <span class="latest-badge">Current File: {{ current_file.display_date }}</span>
+            {% endif %}
+        </div>
+        
+        {% if needs_update %}
+        <div class="warning-alert">
+            <span class="warning-message">Stock file is older than 1 day. Please upload the latest inventory file.</span>
+            <a href="{{ url_for('upload_file') }}" class="btn btn-outline">Upload Now</a>
+        </div>
+        {% endif %}
+        
+        <div class="file-selector">
+            <label for="fileSelect" style="font-weight: 500;">Select Inventory Date:</label>
+            <select id="fileSelect" class="file-select">
+                <option value="">-- Select a file --</option>
+                {% for file in available_files %}
+                <option value="{{ file.id }}" {% if current_file and file.id == current_file.id %}selected{% endif %}>
+                    {{ file.display_date }} ({{ file.record_count }} items) {% if loop.index == 1 %}- LATEST{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    
+    {% if stats %}
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total SKUs</div>
+            <div class="stat-value">{{ stats.total_skus }}</div>
+        </div>
+        <div class="stat-card in-stock">
+            <div class="stat-label">In Stock</div>
+            <div class="stat-value">{{ stats.in_stock }}</div>
+        </div>
+        <div class="stat-card low-stock">
+            <div class="stat-label">Low Stock</div>
+            <div class="stat-value">{{ stats.low_stock }}</div>
+        </div>
+        <div class="stat-card out-of-stock">
+            <div class="stat-label">Out of Stock</div>
+            <div class="stat-value">{{ stats.out_of_stock }}</div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <div class="search-section">
+        <form method="GET" action="{{ url_for('dashboard') }}" class="search-form">
+            {% if current_file %}
+            <input type="hidden" name="file_id" value="{{ current_file.id }}">
+            {% endif %}
+            <input type="text" 
+                   id="searchInput"
+                   name="q" 
+                   class="search-input" 
+                   placeholder="Search by SKU, Description, Category, or Remark..." 
+                   value="{{ search_query }}"
+                   autocomplete="off">
+            <button type="submit" class="btn btn-primary">Search</button>
+            {% if search_query %}
+            <a href="{{ url_for('dashboard', file_id=current_file.id if current_file else none) }}" class="btn btn-outline">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+    
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                Stock Results
+                {% if search_query %}
+                <span style="font-size: 0.875rem; color: var(--text-light); margin-left: 0.5rem;">
+                    Search: "{{ search_query }}" ({{ pagination.total }} results)
+                </span>
+                {% endif %}
+            </h3>
+        </div>
+        
+        {% if items %}
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>SKU</th>
+                        <th>Description</th>
+                        <th>Category</th>
+                        <th>Status</th>
+                        <th>Available</th>
+                        <th>Kenneth's</th>
+                        <th>Container</th>
+                        <th>Buffer</th>
+                        <th>Last Count</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>
+                            <span id="sku-{{ item.id }}">{{ item.sku }}</span>
+                            <button class="copy-btn" data-target="sku-{{ item.id }}" title="Copy SKU">
+                                Copy
+                            </button>
+                        </td>
+                        <td>{{ item.description }}</td>
+                        <td>{{ item.category }}</td>
+                        <td>
+                            <span class="status-badge status-{{ item.stock_level }}">
+                                {% if item.stock_level == 'in_stock' %}
+                                    IN STOCK
+                                {% elif item.stock_level == 'low_stock' %}
+                                    LOW STOCK
+                                {% else %}
+                                    OUT OF STOCK
+                                {% endif %}
+                            </span>
+                        </td>
+                        <td style="font-weight: 600;">{{ item.available_stock }}</td>
+                        <td>{{ item.kenneth_inventory }}</td>
+                        <td>
+                            {% if item.total_container_qty > 0 %}
+                            <button class="btn btn-icon view-container-btn" 
+                                    data-sku="{{ item.sku }}"
+                                    data-container-details="{{ item.container_details }}"
+                                    data-container-qty="{{ item.total_container_qty }}"
+                                    title="View Container Details">
+                                {{ item.total_container_qty }} units
+                            </button>
+                            {% else %}
+                            0
+                            {% endif %}
+                        </td>
+                        <td>{{ item.buffer_qty }}</td>
+                        <td>{{ item.last_count_date }}</td>
+                        <td>
+                            <a href="{{ url_for('compare', sku=item.sku, file_id1=current_file.id) }}" 
+                               class="btn btn-outline btn-icon" 
+                               title="Compare this SKU">
+                                Compare
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        {% if pagination.total_pages > 1 %}
+        <div class="pagination">
+            {% if pagination.page > 1 %}
+            <a href="{{ url_for('dashboard', page=pagination.page-1, q=search_query, file_id=current_file.id) }}" 
+               class="page-link" 
+               data-page="{{ pagination.page-1 }}">
+                Previous
+            </a>
+            {% endif %}
+            
+            {% for p in range(1, pagination.total_pages + 1) %}
+                {% if p >= pagination.page - 2 and p <= pagination.page + 2 %}
+                <a href="{{ url_for('dashboard', page=p, q=search_query, file_id=current_file.id) }}" 
+                   class="page-link {% if p == pagination.page %}active{% endif %}"
+                   data-page="{{ p }}">
+                    {{ p }}
+                </a>
+                {% endif %}
+            {% endfor %}
+            
+            {% if pagination.page < pagination.total_pages %}
+            <a href="{{ url_for('dashboard', page=pagination.page+1, q=search_query, file_id=current_file.id) }}" 
+               class="page-link"
+               data-page="{{ pagination.page+1 }}">
+                Next
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        {% else %}
+        <p style="text-align: center; padding: 2rem; color: var(--text-light);">
+            {% if search_query %}
+            No items found matching "{{ search_query }}"
+            {% else %}
+            No stock data available. Please upload an inventory file.
+            {% endif %}
+        </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="logs-page">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Activity Logs</h2>
+        </div>
+        
+        {% if logs %}
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>User</th>
+                        <th>Action</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log.timestamp }}</td>
+                        <td>{{ log.user_id }}</td>
+                        <td>
+                            <span class="status-badge" style="background: var(--background); color: var(--text-dark);">
+                                {{ log.action }}
+                            </span>
+                        </td>
+                        <td>
+                            <span id="log-detail-{{ log.id }}">{{ log.details }}</span>
+                            <button class="copy-btn" data-target="log-detail-{{ log.id }}" title="Copy Details">
+                                Copy
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        {% if pagination.total_pages > 1 %}
+        <div class="pagination">
+            {% if pagination.page > 1 %}
+            <a href="{{ url_for('view_logs', page=pagination.page-1) }}" class="page-link" data-page="{{ pagination.page-1 }}">
+                Previous
+            </a>
+            {% endif %}
+            
+            {% for p in range(1, pagination.total_pages + 1) %}
+                {% if p >= pagination.page - 2 and p <= pagination.page + 2 %}
+                <a href="{{ url_for('view_logs', page=p) }}" 
+                   class="page-link {% if p == pagination.page %}active{% endif %}"
+                   data-page="{{ p }}">
+                    {{ p }}
+                </a>
+                {% endif %}
+            {% endfor %}
+            
+            {% if pagination.page < pagination.total_pages %}
+            <a href="{{ url_for('view_logs', page=pagination.page+1) }}" class="page-link" data-page="{{ pagination.page+1 }}">
+                Next
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        {% else %}
+        <p style="text-align: center; padding: 2rem; color: var(--text-light);">
+            No activity logs available.
+        </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

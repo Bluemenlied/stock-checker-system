@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="compare-page">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">SKU Comparison</h2>
+        </div>
+        
+        <form method="GET" action="{{ url_for('compare') }}" class="compare-form">
+            <div class="form-group">
+                <label for="sku" class="form-label">SKU to Compare:</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" 
+                           id="sku" 
+                           name="sku" 
+                           class="form-control" 
+                           value="{{ sku }}"
+                           placeholder="Enter SKU"
+                           required
+                           style="flex: 1;">
+                    <button type="submit" class="btn btn-primary">Compare</button>
+                </div>
+            </div>
+            
+            {% if available_files and available_files|length > 1 %}
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+                <div class="form-group">
+                    <label for="date1" class="form-label">First Date:</label>
+                    <select id="date1" name="file_id1" class="form-control" required>
+                        <option value="">-- Select date --</option>
+                        {% for file in available_files %}
+                        <option value="{{ file.id }}" {% if file_id1 == file.id %}selected{% endif %}>
+                            {{ file.display_date }} ({{ file.record_count }} items)
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="date2" class="form-label">Second Date:</label>
+                    <select id="date2" name="file_id2" class="form-control" required>
+                        <option value="">-- Select date --</option>
+                        {% for file in available_files %}
+                        <option value="{{ file.id }}" {% if file_id2 == file.id %}selected{% endif %}>
+                            {{ file.display_date }} ({{ file.record_count }} items)
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            {% else %}
+            <p style="color: var(--warning-color); margin-top: 1rem;">
+                At least two inventory files are required for comparison.
+            </p>
+            {% endif %}
+        </form>
+    </div>
+    
+    {% if comparison_result %}
+    <div class="card" style="margin-top: 2rem;">
+        <div class="card-header">
+            <h3 class="card-title">
+                Comparison Results: {{ comparison_result.sku }}
+                <span id="compare-sku-{{ comparison_result.sku }}" style="display: none;">{{ comparison_result.sku }}</span>
+                <button class="copy-btn" data-target="compare-sku-{{ comparison_result.sku }}" style="margin-left: 0.5rem;">
+                    Copy SKU
+                </button>
+            </h3>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+            <div style="background: var(--background); padding: 1.5rem; border-radius: 0.5rem;">
+                <h4 style="margin-bottom: 1rem; color: var(--text-dark);">
+                    {{ comparison_result.date1.file_date if comparison_result.date1 else 'No Data' }}
+                </h4>
+                {% if comparison_result.date1 %}
+                <table style="width: 100%;">
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Available Stock:</td>
+                        <td style="padding: 0.5rem 0; font-weight: 600;">{{ comparison_result.date1.available_stock }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Kenneth's Inventory:</td>
+                        <td style="padding: 0.5rem 0;">{{ comparison_result.date1.kenneth_inventory }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Container Qty:</td>
+                        <td style="padding: 0.5rem 0;">{{ comparison_result.date1.total_container_qty }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Buffer Qty:</td>
+                        <td style="padding: 0.5rem 0;">{{ comparison_result.date1.buffer_qty }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Status:</td>
+                        <td style="padding: 0.5rem 0;">
+                            <span class="status-badge status-{{ comparison_result.date1.stock_level }}">
+                                {{ comparison_result.date1.stock_status }}
+                            </span>
+                        </td>
+                    </tr>
+                </table>
+                {% else %}
+                <p style="color: var(--text-light);">No data available for this date.</p>
+                {% endif %}
+            </div>
+            
+            <div style="background: var(--background); padding: 1.5rem; border-radius: 0.5rem;">
+                <h4 style="margin-bottom: 1rem; color: var(--text-dark);">
+                    {{ comparison_result.date2.file_date if comparison_result.date2 else 'No Data' }}
+                </h4>
+                {% if comparison_result.date2 %}
+                <table style="width: 100%;">
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Available Stock:</td>
+                        <td style="padding: 0.5rem 0; font-weight: 600;">{{ comparison_result.date2.available_stock }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Kenneth's Inventory:</td>
+                        <td style="padding: 0.5rem 0;">{{ comparison_result.date2.kenneth_inventory }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Container Qty:</td>
+                        <td style="padding: 0.5rem 0;">{{ comparison_result.date2.total_container_qty }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Buffer Qty:</td>
+                        <td style="padding: 0.5rem 0;">{{ comparison_result.date2.buffer_qty }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 0.5rem 0; color: var(--text-light);">Status:</td>
+                        <td style="padding: 0.5rem 0;">
+                            <span class="status-badge status-{{ comparison_result.date2.stock_level }}">
+                                {{ comparison_result.date2.stock_status }}
+                            </span>
+                        </td>
+                    </tr>
+                </table>
+                {% else %}
+                <p style="color: var(--text-light);">No data available for this date.</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        {% if comparison_result.date1 and comparison_result.date2 %}
+        <div style="margin-top: 2rem; padding: 1.5rem; background: var(--white); border: 1px solid var(--border); border-radius: 0.5rem;">
+            <h4 style="margin-bottom: 1rem; color: var(--text-dark);">Difference Analysis</h4>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <span style="font-size: 1.5rem; font-weight: 700; 
+                      {% if comparison_result.trend == 'increase' %}color: var(--success-color);
+                      {% elif comparison_result.trend == 'decrease' %}color: var(--danger-color);
+                      {% else %}color: var(--text-light);{% endif %}">
+                    {% if comparison_result.difference > 0 %}+{% endif %}{{ comparison_result.difference }}
+                </span>
+                <span style="color: var(--text-light);">
+                    {% if comparison_result.trend == 'increase' %}
+                    (Increased from previous period)
+                    {% elif comparison_result.trend == 'decrease' %}
+                    (Decreased from previous period)
+                    {% else %}
+                    (No change from previous period)
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% elif sku %}
+    <div class="card" style="margin-top: 2rem;">
+        <p style="text-align: center; padding: 2rem; color: var(--text-light);">
+            No comparison data available for SKU: {{ sku }}
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

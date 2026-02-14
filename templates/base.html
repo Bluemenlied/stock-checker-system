@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>{{ system_name }} - {{ title if title else 'Dashboard' }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        :root {
+            --primary-color: {{ primary_color }};
+            --secondary-color: {{ secondary_color }};
+            --success-color: {{ success_color }};
+            --warning-color: {{ warning_color }};
+            --danger-color: {{ danger_color }};
+        }
+    </style>
+</head>
+<body>
+    {% if session.user_id %}
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
+                <img src="{{ logo_url }}" alt="{{ system_name }}" class="navbar-logo" 
+                     onerror="this.src='/static/images/default-logo.png'">
+                <span class="navbar-title">{{ system_name }}</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="{{ url_for('dashboard') }}" class="navbar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                    Dashboard
+                </a>
+                {% if session.role in ['admin', 'staff'] %}
+                <a href="{{ url_for('compare') }}" class="navbar-link {% if request.endpoint == 'compare' %}active{% endif %}">
+                    Compare SKU
+                </a>
+                <a href="{{ url_for('upload_file') }}" class="navbar-link {% if request.endpoint == 'upload_file' %}active{% endif %}">
+                    Upload Stock
+                </a>
+                {% endif %}
+                {% if session.role == 'admin' %}
+                <a href="{{ url_for('view_logs') }}" class="navbar-link {% if request.endpoint == 'view_logs' %}active{% endif %}">
+                    Activity Logs
+                </a>
+                <a href="{{ url_for('settings') }}" class="navbar-link {% if request.endpoint == 'settings' %}active{% endif %}">
+                    Settings
+                </a>
+                {% endif %}
+                <a href="{{ url_for('change_password') }}" class="navbar-link">
+                    Change Password
+                </a>
+                <a href="{{ url_for('logout') }}" class="navbar-link" style="color: var(--danger-color);">
+                    Logout
+                </a>
+                <span class="user-info">
+                    <span>👤</span>
+                    <span>{{ session.full_name }} ({{ session.role }})</span>
+                </span>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            <div class="flash-messages">
+                {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">
+                    {% if category == 'success' %}✅
+                    {% elif category == 'danger' %}❌
+                    {% elif category == 'warning' %}⚠️
+                    {% else %}ℹ️{% endif %}
+                    {{ message }}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Container Details Modal -->
+    <div id="containerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Container Details</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
