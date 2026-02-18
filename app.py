@@ -1,4 +1,6 @@
 import os
+import json
+import re
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.utils import secure_filename
@@ -10,7 +12,7 @@ load_dotenv()
 
 # Import database modules
 from database import db
-from models import User, File, Inventory, ActivityLog, Settings
+from models import User, File, Inventory, ActivityLog, Settings, PrintRequest
 from sqlalchemy import or_, desc
 
 app = Flask(__name__)
@@ -415,6 +417,98 @@ def get_stats(file_id):
         return None
 
 # ============================================================================
+# BULK SEARCH ROUTE
+# ============================================================================
+@app.route('/bulk-search', methods=['GET', 'POST'])
+@login_required
+def bulk_search():
+    if request.method == 'GET':
+        # Get available files for the dropdown
+        files = File.query.order_by(File.file_date.desc()).all()
+        available_files = []
+        for f in files:
+            available_files.append({
+                'id': str(f.id),
+                'filename': f.filename,
+                'file_date': f.file_date.strftime('%Y-%m-%d'),
+                'display_date': f.file_date.strftime('%b %d, %Y'),
+                'record_count': f.record_count
+            })
+        return render_template('bulk_search.html', title='Bulk Search', available_files=available_files)
+    
+    elif request.method == 'POST':
+        try:
+            import pandas as pd
+            
+            if 'file' not in request.files:
+                return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+            
+            file = request.files['file']
+            file_id = request.form.get('file_id')
+            
+            if not file or not file_id:
+                return jsonify({'success': False, 'error': 'Missing file or file selection'}), 400
+            
+            # Read the uploaded Excel file
+            df = pd.read_excel(file)
+            
+            # Check if SKU column exists
+            if 'SKU' not in df.columns:
+                return jsonify({'success': False, 'error': 'Excel file must contain an "SKU" column'}), 400
+            
+            # Get all SKUs from the uploaded file
+            search_skus = df['SKU'].dropna().astype(str).str.strip().unique().tolist()
+            
+            # Get inventory items from the selected file
+            inventory_items = Inventory.query.filter_by(file_id=file_id).all()
+            
+            # Create a dictionary for quick lookup
+            inventory_dict = {item.sku: item for item in inventory_items}
+            
+            # Separate found and not found SKUs
+            found = []
+            not_found = []
+            
+            for sku in search_skus:
+                if sku in inventory_dict:
+                    item = inventory_dict[sku]
+                    found.append({
+                        'id': str(item.id),
+                        'sku': item.sku,
+                        'description': item.description,
+                        'category': item.category,
+                        'stock_level': item.stock_level,
+                        'available_stock': item.available_stock,
+                        'total_container_qty': item.total_container_qty,
+                        'container_details': item.container_details,
+                        'last_count_date': item.last_count_date.strftime('%Y-%m-%d') if item.last_count_date else None,
+                        'kenneth_inventory': item.kenneth_inventory,
+                        'buffer_qty': item.buffer_qty
+                    })
+                else:
+                    not_found.append(sku)
+            
+            # Log activity
+            log = ActivityLog(
+                user_id=session['user_id'],
+                action='BULK_SEARCH',
+                details=f'Bulk searched {len(search_skus)} SKUs. Found: {len(found)}, Not found: {len(not_found)}'
+            )
+            db.session.add(log)
+            db.session.commit()
+            
+            return jsonify({
+                'success': True,
+                'found': found,
+                'not_found': not_found,
+                'total': len(search_skus)
+            })
+            
+        except Exception as e:
+            print(f"Bulk search error: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============================================================================
 # COMPARE ROUTE
 # ============================================================================
 
@@ -683,6 +777,357 @@ def parse_excel_file(file_path, filename):
         return False, str(e)
 
 # ============================================================================
+# DELETE FILE ROUTE - VERIFIED WORKING
+# ============================================================================
+@app.route('/delete-file/<file_id>', methods=['POST'])
+@login_required
+@role_required(['admin'])
+def delete_file(file_id):
+    """Delete a file and all its associated inventory records"""
+    try:
+        # Find the file
+        file = File.query.get(file_id)
+        if not file:
+            return jsonify({'success': False, 'error': 'File not found'}), 404
+        
+        # Get count for logging
+        record_count = Inventory.query.filter_by(file_id=file_id).count()
+        filename = file.filename
+        
+        # Delete the file (cascade will delete all inventory records)
+        db.session.delete(file)
+        db.session.commit()
+        
+        # Log the activity
+        log = ActivityLog(
+            user_id=session['user_id'],
+            action='DELETE_FILE',
+            details=f'Deleted file: {filename} with {record_count} records'
+        )
+        db.session.add(log)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Deleted {filename} with {record_count} records'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error deleting file: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============================================================================
+# PRINT REQUEST ROUTES
+# ============================================================================
+@app.route('/print-request', methods=['GET'])
+@login_required
+def print_request_page():
+    # Get user's requests
+    my_requests = PrintRequest.query.filter_by(
+        requested_by_id=session['user_id']
+    ).order_by(PrintRequest.requested_at.desc()).all()
+    
+    # Initialize empty lists for admin views
+    pending_requests = []
+    approved_requests = []
+    printed_requests = []
+    completed_requests = []
+    
+    # Statistics
+    stats = {
+        'pending': 0,
+        'approved': 0,
+        'printed': 0,
+        'completed': 0
+    }
+    
+    # Admin views
+    if session['role'] == 'admin':
+        # Get all requests with different statuses
+        pending_requests = PrintRequest.query.filter_by(
+            status='pending'
+        ).order_by(PrintRequest.requested_at.asc()).all()
+        
+        approved_requests = PrintRequest.query.filter_by(
+            status='approved'
+        ).order_by(PrintRequest.requested_at.desc()).all()
+        
+        printed_requests = PrintRequest.query.filter_by(
+            status='printed'
+        ).order_by(PrintRequest.printed_at.desc()).all()
+        
+        completed_requests = PrintRequest.query.filter_by(
+            status='completed'
+        ).order_by(PrintRequest.completed_at.desc()).limit(50).all()
+        
+        # Calculate statistics for admin dashboard
+        stats = {
+            'pending': len(pending_requests),
+            'approved': len(approved_requests),
+            'printed': len(printed_requests),
+            'completed': len(completed_requests)
+        }
+    
+    # Get available files for dashboard source
+    files = File.query.order_by(File.file_date.desc()).all()
+    available_files = [{
+        'id': str(f.id),
+        'display_date': f.file_date.strftime('%b %d, %Y'),
+        'record_count': f.record_count
+    } for f in files]
+    
+    # Get recent bulk searches for this user
+    bulk_searches = ActivityLog.query.filter_by(
+        user_id=session['user_id'],
+        action='BULK_SEARCH'
+    ).order_by(ActivityLog.timestamp.desc()).limit(10).all()
+    
+    bulk_searches_data = []
+    for log in bulk_searches:
+        # Parse details to extract counts
+        import re
+        match = re.search(r'Found: (\d+), Not found: (\d+)', log.details)
+        if match:
+            bulk_searches_data.append({
+                'id': log.id,
+                'date': log.timestamp.strftime('%Y-%m-%d %H:%M'),
+                'found': match.group(1),
+                'not_found': match.group(2),
+                'skus': []  # You'd need to store actual SKUs if you want this feature
+            })
+    
+    return render_template(
+        'print_request.html',
+        title='Print Requests',
+        my_requests=my_requests,
+        pending_requests=pending_requests,
+        approved_requests=approved_requests,
+        printed_requests=printed_requests,
+        completed_requests=completed_requests,
+        stats=stats,  # Now stats is defined!
+        available_files=available_files,
+        bulk_searches=bulk_searches_data
+    )
+
+@app.route('/api/print-request', methods=['POST'])
+@login_required
+def create_print_request():
+    try:
+        data = request.json
+        skus = data.get('skus', [])
+        notes = data.get('notes', '')
+        source = data.get('source', 'manual')
+        
+        if not skus:
+            return jsonify({'success': False, 'error': 'No SKUs provided'}), 400
+        
+        if len(skus) > 500:
+            return jsonify({'success': False, 'error': 'Maximum 500 SKUs allowed'}), 400
+        
+        # Generate unique request ID
+        today = datetime.utcnow().strftime('%Y%m%d')
+        count = PrintRequest.query.filter(
+            db.func.date(PrintRequest.requested_at) == datetime.utcnow().date()
+        ).count() + 1
+        request_id = f"PR-{today}-{count:04d}"
+        
+        # Format SKUs to ensure they have quantity
+        formatted_skus = []
+        for sku in skus:
+            if isinstance(sku, dict):
+                # Already has sku and qty
+                formatted_skus.append({
+                    'sku': sku.get('sku'),
+                    'qty': sku.get('qty', 1)
+                })
+            else:
+                # Just a string, add default quantity 1
+                formatted_skus.append({
+                    'sku': sku,
+                    'qty': 1
+                })
+        
+        # Create print request
+        print_request = PrintRequest(
+            request_id=request_id,
+            requested_by=session['username'],
+            requested_by_id=session['user_id'],
+            requested_by_role=session['role'],
+            sku_list=json.dumps(formatted_skus),
+            sku_count=len(formatted_skus),
+            notes=notes,
+            source_type=source,
+            status='pending'
+        )
+        
+        # Auto-approve if requested by admin
+        if session['role'] == 'admin':
+            print_request.status = 'approved'
+            print_request.approved_by = session['username']
+            print_request.approved_at = datetime.utcnow()
+        
+        db.session.add(print_request)
+        db.session.commit()
+        
+        # Log activity
+        total_qty = sum(item['qty'] for item in formatted_skus)
+        log = ActivityLog(
+            user_id=session['user_id'],
+            action='CREATE_PRINT_REQUEST',
+            details=f'Created print request {request_id} with {len(formatted_skus)} items, total quantity {total_qty}'
+        )
+        db.session.add(log)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'request_id': request_id,
+            'status': print_request.status
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error creating print request: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/print-request/<request_id>/approve', methods=['POST'])
+@login_required
+@role_required(['admin'])
+def approve_print_request(request_id):
+    try:
+        print_request = PrintRequest.query.get(request_id)
+        if not print_request:
+            return jsonify({'success': False, 'error': 'Request not found'}), 404
+        
+        print_request.status = 'approved'
+        print_request.approved_by = session['username']
+        print_request.approved_at = datetime.utcnow()
+        db.session.commit()
+        
+        log = ActivityLog(
+            user_id=session['user_id'],
+            action='APPROVE_PRINT_REQUEST',
+            details=f'Approved print request {print_request.request_id}'
+        )
+        db.session.add(log)
+        db.session.commit()
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/print-request/<request_id>/reject', methods=['POST'])
+@login_required
+@role_required(['admin'])
+def reject_print_request(request_id):
+    try:
+        data = request.json or {}
+        reason = data.get('reason', '')
+        
+        print_request = PrintRequest.query.get(request_id)
+        if not print_request:
+            return jsonify({'success': False, 'error': 'Request not found'}), 404
+        
+        print_request.status = 'rejected'
+        print_request.notes = (print_request.notes or '') + f"\nRejected: {reason}".strip()
+        db.session.commit()
+        
+        log = ActivityLog(
+            user_id=session['user_id'],
+            action='REJECT_PRINT_REQUEST',
+            details=f'Rejected print request {print_request.request_id}'
+        )
+        db.session.add(log)
+        db.session.commit()
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/print-request/<request_id>/complete', methods=['POST'])
+@login_required
+def complete_print_request(request_id):
+    try:
+        print_request = PrintRequest.query.get(request_id)
+        if not print_request:
+            return jsonify({'success': False, 'error': 'Request not found'}), 404
+        
+        # Only the requester or admin can mark as complete
+        if print_request.requested_by_id != session['user_id'] and session['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'Permission denied'}), 403
+        
+        print_request.status = 'completed'
+        print_request.completed_at = datetime.utcnow()
+        db.session.commit()
+        
+        log = ActivityLog(
+            user_id=session['user_id'],
+            action='COMPLETE_PRINT_REQUEST',
+            details=f'Completed print request {print_request.request_id}'
+        )
+        db.session.add(log)
+        db.session.commit()
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/print-request/<request_id>/skus', methods=['GET'])
+@login_required
+def get_print_request_skus(request_id):
+    """Get SKUs for a request with quantities"""
+    try:
+        print_request = PrintRequest.query.get(request_id)
+        if not print_request:
+            return jsonify({'success': False, 'error': 'Request not found'}), 404
+        
+        # Check permission
+        if print_request.requested_by_id != session['user_id'] and session['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'Permission denied'}), 403
+        
+        skus = print_request.get_sku_list()
+        
+        return jsonify({'success': True, 'skus': skus, 'count': len(skus)})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/print-request/<request_id>/print', methods=['GET'])
+@login_required
+def print_request_view(request_id):
+    try:
+        print_request = PrintRequest.query.get(request_id)
+        if not print_request:
+            flash('Print request not found', 'danger')
+            return redirect(url_for('print_request_page'))
+        
+        # Check permission
+        if print_request.requested_by_id != session['user_id'] and session['role'] != 'admin':
+            flash('Permission denied', 'danger')
+            return redirect(url_for('print_request_page'))
+        
+        skus = json.loads(print_request.sku_list)
+        
+        return render_template(
+            'print_view.html',
+            title=f'Print Request {print_request.request_id}',
+            request=print_request,
+            skus=skus
+        )
+        
+    except Exception as e:
+        print(f"Print view error: {e}")
+        flash('Error loading print request', 'danger')
+        return redirect(url_for('print_request_page'))
+
+# ============================================================================
 # LOGS ROUTE
 # ============================================================================
 
@@ -881,6 +1326,91 @@ def create_user():
         print(f"Create user error: {e}")
     
     return redirect(url_for('settings'))
+
+@app.route('/get-file-skus/<file_id>', methods=['GET'])
+@login_required
+def get_file_skus(file_id):
+    """Get all SKUs from a specific file (for bulk search preview)"""
+    try:
+        skus = [item.sku for item in Inventory.query.filter_by(file_id=file_id).all()]
+        return jsonify({'success': True, 'skus': skus})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
+# ============================================================================
+# EXPORT API ROUTES - WITH SKU LISTS
+# ============================================================================
+@app.route('/api/export-requests/<status>', methods=['GET'])
+@login_required
+@role_required(['admin'])
+def export_requests(status):
+    """Export requests data for CSV download with quantities"""
+    try:
+        if status == 'pending':
+            requests = PrintRequest.query.filter_by(status='pending').order_by(PrintRequest.requested_at.asc()).all()
+        elif status == 'approved':
+            requests = PrintRequest.query.filter_by(status='approved').order_by(PrintRequest.requested_at.desc()).all()
+        elif status == 'printed':
+            requests = PrintRequest.query.filter_by(status='printed').order_by(PrintRequest.printed_at.desc()).all()
+        else:
+            return jsonify({'success': False, 'error': 'Invalid status'}), 400
+        
+        request_list = []
+        for req in requests:
+            sku_list = req.get_sku_list()
+            data = {
+                'request_id': req.request_id,
+                'requested_by': req.requested_by,
+                'role': req.requested_by_role.upper(),
+                'sku_count': req.sku_count,
+                'sku_list': sku_list,
+                'notes': req.notes or ''
+            }
+            
+            if status == 'pending':
+                data['date'] = req.requested_at.strftime('%Y-%m-%d %H:%M')
+            elif status == 'approved':
+                data['approved_by'] = req.approved_by or ''
+                data['approved_date'] = req.approved_at.strftime('%Y-%m-%d %H:%M') if req.approved_at else ''
+            elif status == 'printed':
+                data['printed_by'] = req.printed_by or ''
+                data['printed_at'] = req.printed_at.strftime('%Y-%m-%d %H:%M') if req.printed_at else ''
+                data['download_count'] = req.download_count
+            
+            request_list.append(data)
+        
+        return jsonify({'success': True, 'requests': request_list})
+        
+    except Exception as e:
+        print(f"Export error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
+@app.route('/api/print-request/<request_id>/details', methods=['GET'])
+@login_required
+def get_print_request_details(request_id):
+    """Get details for a print request"""
+    try:
+        print_request = PrintRequest.query.get(request_id)
+        if not print_request:
+            return jsonify({'success': False, 'error': 'Request not found'}), 404
+        
+        # Check permission
+        if print_request.requested_by_id != session['user_id'] and session['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'Permission denied'}), 403
+        
+        return jsonify({
+            'success': True,
+            'request_id': print_request.request_id,
+            'requested_by': print_request.requested_by,
+            'requested_by_role': print_request.requested_by_role,
+            'requested_at': print_request.requested_at.strftime('%Y-%m-%d %H:%M'),
+            'sku_count': print_request.sku_count,
+            'notes': print_request.notes,
+            'status': print_request.status
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ============================================================================
 # ERROR HANDLERS

@@ -12,7 +12,7 @@
         
         {% if needs_update %}
         <div class="warning-alert">
-            <span class="warning-message">Stock file is older than 1 day. Please upload the latest inventory file.</span>
+            <span class="warning-message">⚠️ Stock file is older than 1 day. Please upload the latest inventory file.</span>
             <a href="{{ url_for('upload_file') }}" class="btn btn-outline">Upload Now</a>
         </div>
         {% endif %}
@@ -27,24 +27,35 @@
                 </option>
                 {% endfor %}
             </select>
+            
+            <!-- Delete File Button (Admins Only) -->
+            {% if current_file and session.role == 'admin' %}
+            <button type="button" class="btn btn-danger" onclick="confirmDeleteFile('{{ current_file.id }}', '{{ current_file.display_date }}')">
+                🗑️ Delete Current File
+            </button>
+            {% endif %}
         </div>
     </div>
     
     {% if stats %}
     <div class="stats-grid">
         <div class="stat-card">
+            <div class="stat-icon">📦</div>
             <div class="stat-label">Total SKUs</div>
             <div class="stat-value">{{ stats.total_skus }}</div>
         </div>
         <div class="stat-card in-stock">
+            <div class="stat-icon">✅</div>
             <div class="stat-label">In Stock</div>
             <div class="stat-value">{{ stats.in_stock }}</div>
         </div>
         <div class="stat-card low-stock">
+            <div class="stat-icon">⚠️</div>
             <div class="stat-label">Low Stock</div>
             <div class="stat-value">{{ stats.low_stock }}</div>
         </div>
         <div class="stat-card out-of-stock">
+            <div class="stat-icon">❌</div>
             <div class="stat-label">Out of Stock</div>
             <div class="stat-value">{{ stats.out_of_stock }}</div>
         </div>
@@ -63,7 +74,7 @@
                    placeholder="Search by SKU, Description, Category, or Remark..." 
                    value="{{ search_query }}"
                    autocomplete="off">
-            <button type="submit" class="btn btn-primary">Search</button>
+            <button type="submit" class="btn btn-primary">🔍 Search</button>
             {% if search_query %}
             <a href="{{ url_for('dashboard', file_id=current_file.id if current_file else none) }}" class="btn btn-outline">Clear</a>
             {% endif %}
@@ -73,7 +84,7 @@
     <div class="card">
         <div class="card-header">
             <h3 class="card-title">
-                Stock Results
+                📋 Stock Results
                 {% if search_query %}
                 <span style="font-size: 0.875rem; color: var(--text-light); margin-left: 0.5rem;">
                     Search: "{{ search_query }}" ({{ pagination.total }} results)
@@ -113,11 +124,11 @@
                         <td>
                             <span class="status-badge status-{{ item.stock_level }}">
                                 {% if item.stock_level == 'in_stock' %}
-                                    IN STOCK
+                                    ✅ IN STOCK
                                 {% elif item.stock_level == 'low_stock' %}
-                                    LOW STOCK
+                                    ⚠️ LOW STOCK
                                 {% else %}
-                                    OUT OF STOCK
+                                    ❌ OUT OF STOCK
                                 {% endif %}
                             </span>
                         </td>
@@ -127,10 +138,15 @@
                             {% if item.total_container_qty > 0 %}
                             <button class="btn btn-icon view-container-btn" 
                                     data-sku="{{ item.sku }}"
-                                    data-container-details="{{ item.container_details }}"
+                                    data-container-details="{{ item.container_details|escape }}"
                                     data-container-qty="{{ item.total_container_qty }}"
+                                    onclick="showContainerModal(
+                                        '{{ item.sku|escape }}', 
+                                        '{{ item.container_details|escape }}', 
+                                        '{{ item.total_container_qty }}'
+                                    )"
                                     title="View Container Details">
-                                {{ item.total_container_qty }} units
+                                📦 {{ item.total_container_qty }} units
                             </button>
                             {% else %}
                             0
@@ -182,14 +198,426 @@
         {% endif %}
         
         {% else %}
-        <p style="text-align: center; padding: 2rem; color: var(--text-light);">
+        <div style="text-align: center; padding: 3rem; color: var(--text-light); background: var(--white); border-radius: var(--radius-lg);">
             {% if search_query %}
-            No items found matching "{{ search_query }}"
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🔍</div>
+            <p>No items found matching "{{ search_query }}"</p>
             {% else %}
-            No stock data available. Please upload an inventory file.
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📂</div>
+            <p>No stock data available. Please upload an inventory file.</p>
             {% endif %}
-        </p>
+        </div>
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ============================================================================
+// CUSTOM CONFIRMATION MODAL FOR DELETE
+// ============================================================================
+function confirmDeleteFile(fileId, fileDate) {
+    // Create modal overlay
+    const modalOverlay = document.createElement('div');
+    modalOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        backdrop-filter: blur(4px);
+        animation: fadeIn 0.3s ease;
+    `;
+    
+    // Create modal content
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: white;
+        border-radius: 1rem;
+        padding: 2rem;
+        max-width: 450px;
+        width: 90%;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        animation: slideDown 0.3s ease;
+        border-left: 6px solid var(--danger-color);
+    `;
+    
+    // Modal header
+    const header = document.createElement('div');
+    header.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    `;
+    header.innerHTML = `
+        <div style="background-color: var(--danger-light); width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+            <span style="font-size: 2rem;">🗑️</span>
+        </div>
+        <h3 style="margin: 0; color: var(--text-dark); font-size: 1.5rem;">Delete File</h3>
+    `;
+    
+    // Modal body
+    const body = document.createElement('div');
+    body.style.marginBottom = '2rem';
+    body.innerHTML = `
+        <p style="color: var(--text-dark); margin-bottom: 1rem;">
+            Are you sure you want to delete the file from <strong>${fileDate}</strong>?
+        </p>
+        <div style="background-color: var(--danger-light); padding: 1rem; border-radius: 0.5rem; border-left: 4px solid var(--danger-color);">
+            <p style="color: var(--danger-color); margin: 0; font-weight: 600;">
+                ⚠️ This will permanently delete:
+            </p>
+            <ul style="color: var(--text-dark); margin-top: 0.5rem; margin-bottom: 0; padding-left: 1.5rem;">
+                <li>The file record</li>
+                <li>All associated SKUs</li>
+            </ul>
+            <p style="color: var(--danger-color); margin-top: 0.5rem; margin-bottom: 0; font-weight: 600;">
+                This action CANNOT be undone!
+            </p>
+        </div>
+    `;
+    
+    // Modal footer
+    const footer = document.createElement('div');
+    footer.style.cssText = `
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+    `;
+    
+    // Cancel button
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = `
+        padding: 0.75rem 1.5rem;
+        border: 2px solid var(--border);
+        background: white;
+        color: var(--text-dark);
+        border-radius: 0.5rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    `;
+    cancelBtn.addEventListener('mouseenter', () => {
+        cancelBtn.style.backgroundColor = 'var(--background)';
+    });
+    cancelBtn.addEventListener('mouseleave', () => {
+        cancelBtn.style.backgroundColor = 'white';
+    });
+    
+    // Delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.innerHTML = '🗑️ Delete Permanently';
+    deleteBtn.style.cssText = `
+        padding: 0.75rem 1.5rem;
+        border: none;
+        background: linear-gradient(135deg, var(--danger-color), #b91c1c);
+        color: white;
+        border-radius: 0.5rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        box-shadow: 0 4px 6px -1px rgba(220, 38, 38, 0.2);
+    `;
+    deleteBtn.addEventListener('mouseenter', () => {
+        deleteBtn.style.transform = 'translateY(-2px)';
+        deleteBtn.style.boxShadow = '0 8px 12px -1px rgba(220, 38, 38, 0.3)';
+    });
+    deleteBtn.addEventListener('mouseleave', () => {
+        deleteBtn.style.transform = 'translateY(0)';
+        deleteBtn.style.boxShadow = '0 4px 6px -1px rgba(220, 38, 38, 0.2)';
+    });
+    
+    // Assemble modal
+    footer.appendChild(cancelBtn);
+    footer.appendChild(deleteBtn);
+    modalContent.appendChild(header);
+    modalContent.appendChild(body);
+    modalContent.appendChild(footer);
+    modalOverlay.appendChild(modalContent);
+    document.body.appendChild(modalOverlay);
+    
+    // Add animations
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes slideDown {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+        @keyframes slideUp {
+            from {
+                transform: translateY(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    // Close modal function
+    function closeModal() {
+        modalOverlay.style.animation = 'fadeOut 0.3s ease';
+        modalContent.style.animation = 'slideUp 0.3s ease';
+        setTimeout(() => {
+            document.body.removeChild(modalOverlay);
+            style.remove();
+        }, 300);
+    }
+    
+    // Event listeners
+    cancelBtn.addEventListener('click', closeModal);
+    modalOverlay.addEventListener('click', (e) => {
+        if (e.target === modalOverlay) closeModal();
+    });
+    
+    // Delete action
+    deleteBtn.addEventListener('click', async () => {
+        deleteBtn.disabled = true;
+        deleteBtn.innerHTML = '<span class="spinner"></span> Deleting...';
+        
+        try {
+            const response = await fetch(`/delete-file/${fileId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                showNotification('✅ File deleted successfully!', 'success');
+                closeModal();
+                setTimeout(() => {
+                    window.location.href = '/dashboard';
+                }, 1500);
+            } else {
+                showNotification('❌ Error: ' + (data.error || 'Unknown error'), 'error');
+                deleteBtn.disabled = false;
+                deleteBtn.innerHTML = '🗑️ Delete Permanently';
+            }
+        } catch (error) {
+            showNotification('❌ Failed to delete file', 'error');
+            deleteBtn.disabled = false;
+            deleteBtn.innerHTML = '🗑️ Delete Permanently';
+        }
+    });
+}
+
+// ============================================================================
+// NOTIFICATION SYSTEM
+// ============================================================================
+function showNotification(message, type = 'info', duration = 3000) {
+    // Remove existing notification if any
+    const existing = document.getElementById('custom-notification');
+    if (existing) existing.remove();
+    
+    // Create notification
+    const notification = document.createElement('div');
+    notification.id = 'custom-notification';
+    
+    let bgColor, icon, borderColor;
+    switch(type) {
+        case 'success':
+            bgColor = 'linear-gradient(135deg, #d1fae5, #a7f3d0)';
+            icon = '✅';
+            borderColor = 'var(--success-color)';
+            break;
+        case 'error':
+            bgColor = 'linear-gradient(135deg, #fee2e2, #fecaca)';
+            icon = '❌';
+            borderColor = 'var(--danger-color)';
+            break;
+        case 'warning':
+            bgColor = 'linear-gradient(135deg, #fef3c7, #fde68a)';
+            icon = '⚠️';
+            borderColor = 'var(--warning-color)';
+            break;
+        default:
+            bgColor = 'linear-gradient(135deg, #dbeafe, #bfdbfe)';
+            icon = 'ℹ️';
+            borderColor = 'var(--primary-color)';
+    }
+    
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 1rem 1.5rem;
+        background: ${bgColor};
+        color: ${borderColor};
+        border-radius: 0.75rem;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        border-left: 6px solid ${borderColor};
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-weight: 500;
+        animation: slideInRight 0.3s ease;
+        max-width: 350px;
+    `;
+    
+    notification.innerHTML = `
+        <span style="font-size: 1.25rem;">${icon}</span>
+        <span>${message}</span>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto remove
+    setTimeout(() => {
+        notification.style.animation = 'slideOutRight 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, duration);
+}
+
+// ============================================================================
+// CONTAINER MODAL FUNCTION
+// ============================================================================
+window.showContainerModal = function(sku, containerDetails, containerQty) {
+    console.log('Opening container modal for:', sku);
+    
+    const modal = document.getElementById('containerModal');
+    if (!modal) {
+        showNotification('Modal not found', 'error');
+        return;
+    }
+    
+    const modalTitle = modal.querySelector('.modal-title');
+    const modalBody = modal.querySelector('.modal-body');
+    
+    if (!modalTitle || !modalBody) {
+        showNotification('Modal components not found', 'error');
+        return;
+    }
+    
+    modalTitle.textContent = `📦 Container Details - ${sku}`;
+    
+    let html = `
+        <div style="margin-bottom: 1.5rem; padding: 1rem; background: linear-gradient(135deg, #f3f4f6, #e5e7eb); border-radius: 0.75rem;">
+            <p style="margin: 0; font-size: 1rem;">
+                <strong>Total Incoming:</strong> 
+                <span style="color: #059669; font-weight: 700; font-size: 1.25rem;">${containerQty}</span> 
+                units
+            </p>
+        </div>
+    `;
+    
+    if (containerDetails && containerDetails !== 'null' && containerDetails !== '') {
+        html += '<h4 style="margin: 1.5rem 0 1rem; color: #1f2937; font-weight: 600;">📅 Expected Arrivals:</h4>';
+        html += '<ul style="list-style: none; padding: 0;">';
+        
+        const regex = /(\d+)\s*\(([^)]+)\)/g;
+        let match;
+        let found = false;
+        
+        while ((match = regex.exec(containerDetails)) !== null) {
+            found = true;
+            html += `
+                <li style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border-bottom: 1px solid #e5e7eb;">
+                    <span style="font-weight: 600; color: #059669;">${match[1]} units</span>
+                    <span style="color: #4b5563; background: #f3f4f6; padding: 0.25rem 0.75rem; border-radius: 1rem;">📅 ${match[2]}</span>
+                </li>
+            `;
+        }
+        
+        if (!found) {
+            html += `
+                <li style="padding: 0.75rem; color: #6b7280;">
+                    ${containerDetails}
+                </li>
+            `;
+        }
+        
+        html += '</ul>';
+    } else {
+        html += '<p style="color: #6b7280; margin-top: 1rem; padding: 1rem; text-align: center; background: #f3f4f6; border-radius: 0.5rem;">No container details available for this SKU.</p>';
+    }
+    
+    modalBody.innerHTML = html;
+    modal.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+};
+
+// ============================================================================
+// MODAL CLOSE FUNCTIONALITY
+// ============================================================================
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('containerModal');
+    if (!modal) return;
+    
+    const closeBtn = modal.querySelector('.modal-close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function() {
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+        });
+    }
+    
+    window.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+        }
+    });
+    
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && modal.style.display === 'block') {
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+        }
+    });
+});
+
+// ============================================================================
+// COPY FUNCTION
+// ============================================================================
+document.querySelectorAll('.copy-btn').forEach(button => {
+    button.addEventListener('click', function(e) {
+        e.preventDefault();
+        const targetId = this.dataset.target;
+        const targetElement = document.getElementById(targetId);
+        
+        if (targetElement) {
+            const textToCopy = targetElement.innerText || targetElement.value;
+            
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                const originalText = this.innerHTML;
+                this.innerHTML = '✓ Copied!';
+                this.classList.add('copied');
+                
+                setTimeout(() => {
+                    this.innerHTML = originalText;
+                    this.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('Copy failed:', err);
+                showNotification('Failed to copy', 'error');
+            });
+        }
+    });
+});
+</script>
 {% endblock %}

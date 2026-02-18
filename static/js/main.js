@@ -642,3 +642,37 @@ document.head.appendChild(style);
 // ============================================================================
 window.showContainerModal = window.showContainerModal;
 window.StockChecker = window.StockChecker;
+
+// ============================================================================
+// FILE DELETION FUNCTIONS
+// ============================================================================
+window.confirmDeleteFile = function(fileId, fileDate) {
+    if (confirm(`⚠️ Are you sure you want to delete the file from ${fileDate}?\n\nThis will permanently delete:\n- The file record\n- All ${document.querySelector(`option[value="${fileId}"]`)?.text.match(/\d+ items/)?.[0] || 'associated'} SKUs\n\nThis action CANNOT be undone!`)) {
+        deleteFile(fileId);
+    }
+};
+
+function deleteFile(fileId) {
+    fetch(`/delete-file/${fileId}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showNotification('✅ File deleted successfully!', 'success');
+            setTimeout(() => {
+                window.location.href = '/dashboard';
+            }, 1500);
+        } else {
+            showNotification('❌ Error: ' + data.error, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showNotification('❌ Failed to delete file', 'error');
+    });
+}
+

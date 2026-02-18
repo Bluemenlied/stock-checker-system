@@ -1,0 +1,1469 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="print-request-page">
+    <!-- Header with Role Badge -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">📋 Print Request System</h2>
+            <div>
+                {% if session.role == 'admin' %}
+                <span class="latest-badge" style="background-color: var(--primary-color); color: white; padding: 0.5rem 1rem; border-radius: 0.375rem;">
+                    👑 ADMIN
+                </span>
+                {% elif session.role == 'staff' %}
+                <span class="latest-badge" style="background-color: var(--warning-color); color: white; padding: 0.5rem 1rem; border-radius: 0.375rem;">
+                    👤 STAFF
+                </span>
+                {% else %}
+                <span class="latest-badge" style="background-color: var(--success-color); color: white; padding: 0.5rem 1rem; border-radius: 0.375rem;">
+                    👁️ VIEWER
+                </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- CREATE NEW REQUEST SECTION - Only visible to STAFF and VIEWER -->
+    {% if session.role != 'admin' %}
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Create New Print Request</h3>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 2rem;">
+            <!-- Left Column - Request Form -->
+            <div>
+                <form id="printRequestForm">
+                    <div class="form-group">
+                        <label class="form-label">Select SKU Source</label>
+                        <select id="sourceType" class="form-control" onchange="toggleSourceInput()">
+                            <option value="manual">📝 Manual SKU Entry</option>
+                            <option value="bulk">📁 From Bulk Search</option>
+                            <option value="dashboard">📊 From Current Dashboard</option>
+                        </select>
+                    </div>
+                    
+                    <div id="manualInput" class="source-input">
+                        <div class="form-group">
+                            <label class="form-label">Enter SKUs (one per line or comma-separated)</label>
+                            <textarea id="skuText" class="form-control" rows="6" 
+                                      placeholder="SKU-12345&#10;SKU-67890&#10;SKU-ABCDE"
+                                      oninput="autoPreviewSkus()"></textarea>
+                            <small style="color: var(--text-light);">Maximum 500 SKUs</small>
+                        </div>
+                    </div>
+                    
+                    <div id="bulkInput" class="source-input" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Select Previous Bulk Search</label>
+                            <select id="bulkSearchSelect" class="form-control">
+                                <option value="">-- Select bulk search --</option>
+                                {% for search in bulk_searches %}
+                                <option value="{{ search.id }}">{{ search.date }} - Found: {{ search.found }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div id="dashboardInput" class="source-input" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Select File</label>
+                            <select id="dashboardFileSelect" class="form-control">
+                                <option value="">-- Select file --</option>
+                                {% for file in available_files %}
+                                <option value="{{ file.id }}">{{ file.display_date }} ({{ file.record_count }} SKUs)</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Purpose/Notes</label>
+                        <textarea id="notes" class="form-control" rows="3" 
+                                  placeholder="Why do you need to print these SKUs?"></textarea>
+                    </div>
+                    
+                    <div style="display: flex; gap: 1rem;">
+                        <button type="submit" class="btn btn-primary">📤 Submit Request</button>
+                        <button type="button" class="btn btn-outline" onclick="previewSkus()">👁️ Preview</button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Right Column - Preview with Quantities -->
+            <div>
+                <div class="card" style="background-color: var(--background); height: fit-content;">
+                    <h4 style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <span>📋 SKU Preview with Quantities</span>
+                        <span id="skuCount" style="background: var(--primary-color); color: white; padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.875rem;">0</span>
+                    </h4>
+                    <div style="max-height: 400px; overflow-y: auto; background: white; border-radius: 0.5rem; margin-bottom: 1rem;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead style="background: var(--primary-color); color: white; position: sticky; top: 0;">
+                                <tr>
+                                    <th style="padding: 0.75rem; text-align: left; width: 50px;">#</th>
+                                    <th style="padding: 0.75rem; text-align: left;">SKU</th>
+                                    <th style="padding: 0.75rem; text-align: center; width: 100px;">QTY</th>
+                                </tr>
+                            </thead>
+                            <tbody id="skuPreviewTable">
+                                <tr>
+                                    <td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-light);">
+                                        No SKUs loaded
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: white; border-radius: 0.5rem;">
+                        <p><strong>Total Items:</strong> <span id="totalItems">0</span></p>
+                        <p><strong>Total Quantity:</strong> <span id="totalQuantity">0</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- MY REQUESTS SECTION - Only visible to STAFF and VIEWER -->
+    {% if session.role != 'admin' %}
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">📋 My Print Requests</h3>
+        </div>
+        
+        {% if my_requests %}
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Request ID</th>
+                        <th>Date</th>
+                        <th>Items</th>
+                        <th>Total QTY</th>
+                        <th>Status</th>
+                        <th>Notes</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for request in my_requests %}
+                    {% set sku_data = request.get_sku_list() %}
+                    {% set total_qty = 0 %}
+                    {% for item in sku_data %}
+                        {% set total_qty = total_qty + (item.qty if item.qty else 1) %}
+                    {% endfor %}
+                    <tr>
+                        <td><strong>{{ request.request_id }}</strong></td>
+                        <td>{{ request.requested_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>{{ request.sku_count }}</td>
+                        <td>{{ total_qty }}</td>
+                        <td>
+                            <span class="status-badge 
+                                {% if request.status == 'approved' %}status-in-stock
+                                {% elif request.status == 'pending' %}status-low-stock
+                                {% elif request.status == 'printed' %}status-in-stock
+                                {% elif request.status == 'completed' %}status-in-stock
+                                {% else %}status-out-of-stock{% endif %}">
+                                
+                                {% if request.status == 'pending' %}⏳ PENDING
+                                {% elif request.status == 'approved' %}✅ APPROVED
+                                {% elif request.status == 'printed' %}🖨️ PRINTED
+                                {% elif request.status == 'completed' %}🎯 COMPLETED
+                                {% elif request.status == 'rejected' %}❌ REJECTED
+                                {% endif %}
+                            </span>
+                        </td>
+                        <td>{{ request.notes or '—' }}</td>
+                        <td>
+                            <button class="btn btn-icon" onclick="viewRequest('{{ request.id }}')" title="View SKUs">👁️</button>
+                            
+                            {% if request.status == 'approved' %}
+                            <button class="btn btn-icon" onclick="copyRequestSkus('{{ request.id }}')" title="Copy SKUs">📋 Copy</button>
+                            <button class="btn btn-icon" onclick="downloadRequestSkus('{{ request.id }}')" title="Download SKUs">📥 Download</button>
+                            <button class="btn btn-icon" onclick="printRequest('{{ request.id }}')" title="Print SKU List">🖨️ Print</button>
+                            {% endif %}
+                            
+                            {% if request.status == 'printed' %}
+                            <button class="btn btn-icon" onclick="markCompleted('{{ request.id }}')" title="Mark Completed">✅ Done</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div style="text-align: center; padding: 3rem; color: var(--text-light);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📭</div>
+            <p>You haven't created any print requests yet.</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+<!-- ADMIN SECTION: Complete Overview (Visible ONLY to Admins) -->
+{% if session.role == 'admin' %}
+<!-- Stats Overview for Admin -->
+<div class="stats-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 2rem;">
+    <div class="stat-card">
+        <div class="stat-icon">⏳</div>
+        <div class="stat-label">Pending</div>
+        <div class="stat-value">{{ stats.pending }}</div>
+    </div>
+    <div class="stat-card in-stock">
+        <div class="stat-icon">✅</div>
+        <div class="stat-label">Approved</div>
+        <div class="stat-value">{{ stats.approved }}</div>
+    </div>
+    <div class="stat-card low-stock">
+        <div class="stat-icon">🖨️</div>
+        <div class="stat-label">Printed</div>
+        <div class="stat-value">{{ stats.printed }}</div>
+    </div>
+    <div class="stat-card out-of-stock">
+        <div class="stat-icon">📊</div>
+        <div class="stat-label">Total</div>
+        <div class="stat-value">{{ stats.pending + stats.approved + stats.printed + stats.completed }}</div>
+    </div>
+</div>
+
+<!-- PENDING APPROVALS - Only show if there are pending requests -->
+{% if pending_requests and pending_requests|length > 0 %}
+<div class="card" style="border-left: 4px solid var(--warning-color); margin-bottom: 2rem;">
+    <div class="card-header">
+        <h3 class="card-title">⏳ Pending Approvals <span class="latest-badge" style="background-color: var(--warning-color); margin-left: 1rem;">{{ pending_requests|length }}</span></h3>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Request ID</th>
+                    <th>Requester</th>
+                    <th>Role</th>
+                    <th>Date</th>
+                    <th>Items</th>
+                    <th>Total QTY</th>
+                    <th>Purpose</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for request in pending_requests %}
+                {% set sku_data = request.get_sku_list() %}
+                {% set total_qty = 0 %}
+                {% for item in sku_data %}
+                    {% set total_qty = total_qty + (item.qty if item.qty else 1) %}
+                {% endfor %}
+                <tr>
+                    <td><strong>{{ request.request_id }}</strong></td>
+                    <td>{{ request.requested_by }}</td>
+                    <td>
+                        {% if request.requested_by_role == 'staff' %}
+                        <span class="status-badge" style="background-color: var(--warning-color); color: white; padding: 0.25rem 0.75rem; border-radius: 0.375rem;">STAFF</span>
+                        {% else %}
+                        <span class="status-badge" style="background-color: var(--success-color); color: white; padding: 0.25rem 0.75rem; border-radius: 0.375rem;">VIEWER</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ request.requested_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>{{ request.sku_count }}</td>
+                    <td>{{ total_qty }}</td>
+                    <td>{{ request.notes or '—' }}</td>
+                    <td>
+                        <button class="btn btn-success btn-icon" onclick="approveRequest('{{ request.id }}')" title="Approve">✅</button>
+                        <button class="btn btn-danger btn-icon" onclick="rejectRequest('{{ request.id }}')" title="Reject">❌</button>
+                        <button class="btn btn-icon" onclick="viewRequest('{{ request.id }}')" title="View SKUs">👁️</button>
+                        <button class="btn btn-outline btn-icon" onclick="exportSingleRequestToCSV('{{ request.id }}')" title="Export this request">
+                            📥 CSV
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- APPROVED REQUESTS - Only show if there are approved requests -->
+{% if approved_requests and approved_requests|length > 0 %}
+<div class="card" style="border-left: 4px solid var(--success-color); margin-bottom: 2rem;">
+    <div class="card-header">
+        <h3 class="card-title">✅ Approved - Ready to Print <span class="latest-badge" style="background-color: var(--success-color); margin-left: 1rem;">{{ approved_requests|length }}</span></h3>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Request ID</th>
+                    <th>Requester</th>
+                    <th>Role</th>
+                    <th>Approved By</th>
+                    <th>Approved Date</th>
+                    <th>Items</th>
+                    <th>Total QTY</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for request in approved_requests %}
+                {% set sku_data = request.get_sku_list() %}
+                {% set total_qty = 0 %}
+                {% for item in sku_data %}
+                    {% set total_qty = total_qty + (item.qty if item.qty else 1) %}
+                {% endfor %}
+                <tr>
+                    <td><strong>{{ request.request_id }}</strong></td>
+                    <td>{{ request.requested_by }}</td>
+                    <td>{{ request.requested_by_role|upper }}</td>
+                    <td>{{ request.approved_by }}</td>
+                    <td>{% if request.approved_at %}{{ request.approved_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</td>
+                    <td>{{ request.sku_count }}</td>
+                    <td>{{ total_qty }}</td>
+                    <td>
+                        <button class="btn btn-icon" onclick="viewRequest('{{ request.id }}')" title="View SKUs">👁️</button>
+                        <button class="btn btn-outline btn-icon" onclick="exportSingleRequestToCSV('{{ request.id }}')" title="Export this request">
+                            📥 CSV
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- PRINTED REQUESTS - Only show if there are printed requests -->
+{% if printed_requests and printed_requests|length > 0 %}
+<div class="card" style="border-left: 4px solid var(--primary-color); margin-bottom: 2rem;">
+    <div class="card-header">
+        <h3 class="card-title">🖨️ Active Print Jobs <span class="latest-badge" style="background-color: var(--primary-color); margin-left: 1rem;">{{ printed_requests|length }}</span></h3>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Request ID</th>
+                    <th>Requester</th>
+                    <th>Printed By</th>
+                    <th>Printed At</th>
+                    <th>Items</th>
+                    <th>Total QTY</th>
+                    <th>Downloads</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for request in printed_requests %}
+                {% set sku_data = request.get_sku_list() %}
+                {% set total_qty = 0 %}
+                {% for item in sku_data %}
+                    {% set total_qty = total_qty + (item.qty if item.qty else 1) %}
+                {% endfor %}
+                <tr>
+                    <td><strong>{{ request.request_id }}</strong></td>
+                    <td>{{ request.requested_by }}</td>
+                    <td>{{ request.printed_by or '—' }}</td>
+                    <td>{% if request.printed_at %}{{ request.printed_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</td>
+                    <td>{{ request.sku_count }}</td>
+                    <td>{{ total_qty }}</td>
+                    <td>{{ request.download_count }}</td>
+                    <td>
+                        <button class="btn btn-icon" onclick="markCompleted('{{ request.id }}')" title="Mark Completed">✅ Complete</button>
+                        <button class="btn btn-icon" onclick="viewRequest('{{ request.id }}')" title="View SKUs">👁️</button>
+                        <button class="btn btn-outline btn-icon" onclick="exportSingleRequestToCSV('{{ request.id }}')" title="Export this request">
+                            📥 CSV
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Empty State - Only show if no requests at all -->
+{% if pending_requests|length == 0 and approved_requests|length == 0 and printed_requests|length == 0 %}
+<div class="card" style="text-align: center; padding: 3rem;">
+    <div style="font-size: 4rem; margin-bottom: 1rem;">📭</div>
+    <h3 style="color: var(--text-dark); margin-bottom: 0.5rem;">No Print Requests</h3>
+    <p style="color: var(--text-light);">All requests have been processed. Check back later for new requests.</p>
+</div>
+{% endif %}
+{% endif %}
+</div>
+
+<script>
+let currentSkus = []; // Array of objects {sku: string, qty: number}
+
+// ============================================================================
+// CUSTOM NOTIFICATION SYSTEM
+// ============================================================================
+function showNotification(message, type = 'info', duration = 3000) {
+    const existing = document.getElementById('custom-notification');
+    if (existing) existing.remove();
+    
+    const notification = document.createElement('div');
+    notification.id = 'custom-notification';
+    
+    let bgColor, icon, borderColor;
+    switch(type) {
+        case 'success':
+            bgColor = 'linear-gradient(135deg, #d1fae5, #a7f3d0)';
+            icon = '✅';
+            borderColor = 'var(--success-color)';
+            break;
+        case 'error':
+            bgColor = 'linear-gradient(135deg, #fee2e2, #fecaca)';
+            icon = '❌';
+            borderColor = 'var(--danger-color)';
+            break;
+        case 'warning':
+            bgColor = 'linear-gradient(135deg, #fef3c7, #fde68a)';
+            icon = '⚠️';
+            borderColor = 'var(--warning-color)';
+            break;
+        default:
+            bgColor = 'linear-gradient(135deg, #dbeafe, #bfdbfe)';
+            icon = 'ℹ️';
+            borderColor = 'var(--primary-color)';
+    }
+    
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 1rem 1.5rem;
+        background: ${bgColor};
+        color: ${borderColor};
+        border-radius: 0.75rem;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        border-left: 6px solid ${borderColor};
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-weight: 500;
+        animation: slideInRight 0.3s ease;
+        max-width: 350px;
+    `;
+    
+    notification.innerHTML = `
+        <span style="font-size: 1.25rem;">${icon}</span>
+        <span>${message}</span>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.animation = 'slideOutRight 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, duration);
+}
+
+// ============================================================================
+// AUTO PREVIEW SKUS AS USER TYPES
+// ============================================================================
+function autoPreviewSkus() {
+    const source = document.getElementById('sourceType').value;
+    if (source === 'manual') {
+        const text = document.getElementById('skuText').value;
+        const skuStrings = text.split(/[,\n]/).map(s => s.trim()).filter(s => s && s.length > 0);
+        
+        // Convert to objects with default quantity 1
+        currentSkus = skuStrings.map(sku => ({
+            sku: sku,
+            qty: 1
+        }));
+        
+        updatePreviewTable();
+    }
+}
+
+// ============================================================================
+// UPDATE QUANTITY FOR A SKU
+// ============================================================================
+function updateQuantity(index, qty) {
+    if (index >= 0 && index < currentSkus.length) {
+        currentSkus[index].qty = Math.max(1, parseInt(qty) || 1);
+        updatePreviewTable();
+    }
+}
+
+// ============================================================================
+// UPDATE PREVIEW TABLE
+// ============================================================================
+function updatePreviewTable() {
+    const tableBody = document.getElementById('skuPreviewTable');
+    const skuCount = document.getElementById('skuCount');
+    const totalItemsSpan = document.getElementById('totalItems');
+    const totalQuantitySpan = document.getElementById('totalQuantity');
+    
+    skuCount.textContent = currentSkus.length;
+    
+    if (currentSkus.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-light);">
+                    No SKUs loaded
+                </td>
+            </tr>
+        `;
+        totalItemsSpan.textContent = '0';
+        totalQuantitySpan.textContent = '0';
+        return;
+    }
+    
+    let totalQty = 0;
+    let html = '';
+    
+    currentSkus.forEach((item, index) => {
+        totalQty += item.qty;
+        html += `
+            <tr>
+                <td style="padding: 0.75rem; border-bottom: 1px solid var(--border); text-align: left;">${index + 1}</td>
+                <td style="padding: 0.75rem; border-bottom: 1px solid var(--border); font-family: monospace;">${item.sku}</td>
+                <td style="padding: 0.75rem; border-bottom: 1px solid var(--border); text-align: center;">
+                    <input type="number" 
+                           min="1" 
+                           value="${item.qty}" 
+                           onchange="updateQuantity(${index}, this.value)"
+                           style="width: 70px; padding: 0.25rem; border: 2px solid var(--border); border-radius: 0.375rem; text-align: center;">
+                </td>
+            </tr>
+        `;
+    });
+    
+    tableBody.innerHTML = html;
+    totalItemsSpan.textContent = currentSkus.length;
+    totalQuantitySpan.textContent = totalQty;
+}
+
+// ============================================================================
+// TOGGLE SOURCE INPUT
+// ============================================================================
+function toggleSourceInput() {
+    const source = document.getElementById('sourceType').value;
+    document.querySelectorAll('.source-input').forEach(el => el.style.display = 'none');
+    document.getElementById(source + 'Input').style.display = 'block';
+}
+
+// ============================================================================
+// PREVIEW SKUS
+// ============================================================================
+function previewSkus() {
+    const source = document.getElementById('sourceType').value;
+    
+    if (source === 'manual') {
+        autoPreviewSkus();
+        if (currentSkus.length > 0) {
+            showNotification(`${currentSkus.length} SKUs loaded`, 'success');
+        } else {
+            showNotification('No SKUs entered', 'warning');
+        }
+    } else if (source === 'dashboard') {
+        const fileId = document.getElementById('dashboardFileSelect').value;
+        if (!fileId) {
+            showNotification('Please select a file', 'warning');
+            return;
+        }
+        showNotification('Loading SKUs...', 'info');
+        fetch(`/get-file-skus/${fileId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && data.skus && data.skus.length > 0) {
+                    // Convert to objects with default quantity 1
+                    currentSkus = data.skus.map(sku => ({
+                        sku: sku,
+                        qty: 1
+                    }));
+                    updatePreviewTable();
+                    showNotification(`${data.skus.length} SKUs loaded from file`, 'success');
+                } else {
+                    showNotification('No SKUs found in selected file', 'warning');
+                }
+            })
+            .catch(err => {
+                showNotification('Error loading SKUs', 'error');
+            });
+    }
+}
+
+// ============================================================================
+// SUBMIT PRINT REQUEST
+// ============================================================================
+document.getElementById('printRequestForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const source = document.getElementById('sourceType').value;
+    
+    if (source === 'manual' && currentSkus.length === 0) {
+        autoPreviewSkus();
+    }
+    
+    if (currentSkus.length === 0) {
+        showNotification('No SKUs to request', 'warning');
+        return;
+    }
+    
+    if (currentSkus.length > 500) {
+        showNotification('Maximum 500 SKUs allowed', 'warning');
+        return;
+    }
+    
+    const submitBtn = this.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.innerHTML = '<span class="spinner"></span> Submitting...';
+    submitBtn.disabled = true;
+    
+    try {
+        const response = await fetch('/api/print-request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                skus: currentSkus,
+                notes: document.getElementById('notes').value,
+                source: source
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(`✅ Request ${data.request_id} submitted successfully!`, 'success');
+            document.getElementById('skuText').value = '';
+            document.getElementById('notes').value = '';
+            currentSkus = [];
+            updatePreviewTable();
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showNotification('❌ Error: ' + (data.error || 'Unknown error'), 'error');
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showNotification('❌ Failed to submit request', 'error');
+        submitBtn.innerHTML = originalText;
+        submitBtn.disabled = false;
+    }
+});
+
+// ============================================================================
+// PRINT-FRIENDLY REQUEST VIEW WITH QUANTITIES
+// ============================================================================
+async function printRequest(requestId) {
+    showNotification('Preparing print view...', 'info');
+    
+    try {
+        const response = await fetch(`/api/print-request/${requestId}/skus`);
+        const data = await response.json();
+        
+        if (data.success && data.skus) {
+            // Get request details
+            const detailsResponse = await fetch(`/api/print-request/${requestId}/details`);
+            const details = await detailsResponse.json();
+            
+            // Calculate total quantity
+            const totalQty = data.skus.reduce((sum, item) => sum + (item.qty || 1), 0);
+            
+            // Create a new window for printing
+            const printWindow = window.open('', '_blank');
+            
+            const skuListHtml = data.skus.map((item, index) => {
+                const qty = item.qty || 1;
+                return `
+                    <tr>
+                        <td style="padding: 0.75rem; border-bottom: 1px solid #e5e7eb; text-align: center;">${index + 1}</td>
+                        <td style="padding: 0.75rem; border-bottom: 1px solid #e5e7eb; font-family: monospace;">${item.sku || item}</td>
+                        <td style="padding: 0.75rem; border-bottom: 1px solid #e5e7eb; text-align: center;">${qty}</td>
+                        <td style="padding: 0.75rem; border-bottom: 1px solid #e5e7eb; text-align: center;">⬜</td>
+                    </tr>
+                `;
+            }).join('');
+            
+            const htmlContent = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Print Request - ${requestId}</title>
+                    <style>
+                        body {
+                            font-family: 'Segoe UI', Arial, sans-serif;
+                            margin: 0;
+                            padding: 2rem;
+                            color: #1f2937;
+                            line-height: 1.5;
+                        }
+                        .print-container {
+                            max-width: 1200px;
+                            margin: 0 auto;
+                        }
+                        .header {
+                            text-align: center;
+                            margin-bottom: 2rem;
+                            padding-bottom: 1.5rem;
+                            border-bottom: 3px solid #2563eb;
+                        }
+                        .header h1 {
+                            color: #2563eb;
+                            margin: 0;
+                            font-size: 2.5rem;
+                            font-weight: 700;
+                        }
+                        .header h2 {
+                            color: #4b5563;
+                            margin: 0.5rem 0 0;
+                            font-weight: normal;
+                            font-size: 1.25rem;
+                        }
+                        .info-section {
+                            background: #f9fafb;
+                            padding: 1.5rem;
+                            border-radius: 0.5rem;
+                            margin-bottom: 2rem;
+                            display: grid;
+                            grid-template-columns: repeat(4, 1fr);
+                            gap: 1rem;
+                        }
+                        .info-box {
+                            text-align: center;
+                        }
+                        .info-label {
+                            font-size: 0.875rem;
+                            color: #6b7280;
+                            text-transform: uppercase;
+                            letter-spacing: 0.05em;
+                            margin-bottom: 0.5rem;
+                        }
+                        .info-value {
+                            font-size: 1.5rem;
+                            font-weight: 700;
+                            color: #2563eb;
+                        }
+                        .info-value.small {
+                            font-size: 1rem;
+                            color: #4b5563;
+                        }
+                        .sku-table {
+                            width: 100%;
+                            border-collapse: collapse;
+                            margin-top: 1.5rem;
+                            border: 1px solid #e5e7eb;
+                        }
+                        .sku-table th {
+                            background: #2563eb;
+                            color: white;
+                            padding: 1rem;
+                            text-align: left;
+                            font-weight: 600;
+                        }
+                        .sku-table td {
+                            padding: 0.75rem;
+                            border-bottom: 1px solid #e5e7eb;
+                        }
+                        .sku-table tr:last-child td {
+                            border-bottom: none;
+                        }
+                        .footer {
+                            margin-top: 2rem;
+                            text-align: right;
+                            color: #6b7280;
+                            font-size: 0.875rem;
+                            border-top: 1px solid #e5e7eb;
+                            padding-top: 1rem;
+                        }
+                        .summary {
+                            background: #2563eb10;
+                            padding: 1rem;
+                            border-radius: 0.5rem;
+                            margin-top: 1rem;
+                            font-weight: 600;
+                            display: flex;
+                            justify-content: space-between;
+                        }
+                        @media print {
+                            body { padding: 0.5rem; }
+                            .info-section { break-inside: avoid; }
+                            .sku-table { break-inside: auto; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="print-container">
+                        <div class="header">
+                            <h1>📋 STOCK CHECKER SYSTEM</h1>
+                            <h2>Print Request: ${requestId}</h2>
+                        </div>
+                        
+                        <div class="info-section">
+                            <div class="info-box">
+                                <div class="info-label">Request Date</div>
+                                <div class="info-value">${details.requested_at || new Date().toLocaleDateString()}</div>
+                            </div>
+                            <div class="info-box">
+                                <div class="info-label">Requester</div>
+                                <div class="info-value">${details.requested_by || ''}</div>
+                                <div class="info-value small">${details.requested_by_role || ''}</div>
+                            </div>
+                            <div class="info-box">
+                                <div class="info-label">Total SKUs</div>
+                                <div class="info-value">${data.skus.length}</div>
+                            </div>
+                            <div class="info-box">
+                                <div class="info-label">Total QTY</div>
+                                <div class="info-value">${totalQty}</div>
+                            </div>
+                        </div>
+
+                        <div class="summary">
+                            <span>SKU List to Print</span>
+                            <span>Total Items: ${data.skus.length} | Total Quantity: ${totalQty}</span>
+                        </div>
+                        
+                        <table class="sku-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 60px;">#</th>
+                                    <th>SKU</th>
+                                    <th style="width: 80px;">QTY</th>
+                                    <th style="width: 100px;">✓ Printed</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${skuListHtml}
+                            </tbody>
+                        </table>
+                        
+                        <div style="margin-top: 2rem; padding: 1rem; background: #f9fafb; border-radius: 0.5rem;">
+                            <p style="margin: 0; color: #4b5563;"><strong>Notes:</strong> ${details.notes || 'No notes provided'}</p>
+                        </div>
+                        
+                        <div class="footer">
+                            <p>Generated on: ${new Date().toLocaleString()} | Print Request System</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `;
+            
+            printWindow.document.write(htmlContent);
+            printWindow.document.close();
+            
+            setTimeout(() => {
+                printWindow.print();
+            }, 500);
+            
+            showNotification('🖨️ Print window opened', 'success');
+        }
+    } catch (error) {
+        console.error('Print error:', error);
+        showNotification('❌ Error preparing print view', 'error');
+    }
+}
+
+// ============================================================================
+// CUSTOM CONFIRMATION MODAL
+// ============================================================================
+function showConfirmModal(title, message, onConfirm) {
+    const modalOverlay = document.createElement('div');
+    modalOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        backdrop-filter: blur(4px);
+        animation: fadeIn 0.3s ease;
+    `;
+    
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: white;
+        border-radius: 1rem;
+        padding: 2rem;
+        max-width: 400px;
+        width: 90%;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        animation: slideDown 0.3s ease;
+    `;
+    
+    modalContent.innerHTML = `
+        <div style="text-align: center; margin-bottom: 1.5rem;">
+            <div style="background-color: var(--warning-light); width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
+                <span style="font-size: 2rem;">⚠️</span>
+            </div>
+            <h3 style="margin: 0; color: var(--text-dark);">${title}</h3>
+        </div>
+        <p style="color: var(--text-dark); text-align: center; margin-bottom: 2rem;">${message}</p>
+        <div style="display: flex; justify-content: center; gap: 1rem;">
+            <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+            <button class="btn btn-primary" id="confirmBtn">Confirm</button>
+        </div>
+    `;
+    
+    modalOverlay.className = 'modal-overlay';
+    modalOverlay.appendChild(modalContent);
+    document.body.appendChild(modalOverlay);
+    
+    document.getElementById('confirmBtn').addEventListener('click', () => {
+        onConfirm();
+        modalOverlay.remove();
+    });
+    
+    modalOverlay.addEventListener('click', (e) => {
+        if (e.target === modalOverlay) modalOverlay.remove();
+    });
+}
+
+// ============================================================================
+// CUSTOM PROMPT MODAL
+// ============================================================================
+function showPromptModal(title, message, onConfirm) {
+    const modalOverlay = document.createElement('div');
+    modalOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        backdrop-filter: blur(4px);
+        animation: fadeIn 0.3s ease;
+    `;
+    
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: white;
+        border-radius: 1rem;
+        padding: 2rem;
+        max-width: 400px;
+        width: 90%;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        animation: slideDown 0.3s ease;
+    `;
+    
+    modalContent.innerHTML = `
+        <div style="text-align: center; margin-bottom: 1.5rem;">
+            <div style="background-color: var(--warning-light); width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
+                <span style="font-size: 2rem;">📝</span>
+            </div>
+            <h3 style="margin: 0; color: var(--text-dark);">${title}</h3>
+        </div>
+        <p style="color: var(--text-dark); margin-bottom: 1rem;">${message}</p>
+        <input type="text" id="promptInput" class="form-control" placeholder="Enter reason..." style="margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: center; gap: 1rem;">
+            <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+            <button class="btn btn-primary" id="promptConfirmBtn">Submit</button>
+        </div>
+    `;
+    
+    modalOverlay.className = 'modal-overlay';
+    modalOverlay.appendChild(modalContent);
+    document.body.appendChild(modalOverlay);
+    
+    document.getElementById('promptConfirmBtn').addEventListener('click', () => {
+        const input = document.getElementById('promptInput').value;
+        onConfirm(input);
+        modalOverlay.remove();
+    });
+    
+    modalOverlay.addEventListener('click', (e) => {
+        if (e.target === modalOverlay) modalOverlay.remove();
+    });
+}
+
+// ============================================================================
+// ADMIN ACTIONS
+// ============================================================================
+async function approveRequest(id) {
+    showConfirmModal(
+        'Approve Request',
+        'Are you sure you want to approve this print request?',
+        async () => {
+            try {
+                await fetch(`/api/print-request/${id}/approve`, { method: 'POST' });
+                showNotification('✅ Request approved', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+                showNotification('❌ Error approving request', 'error');
+            }
+        }
+    );
+}
+
+async function rejectRequest(id) {
+    showPromptModal(
+        'Reject Request',
+        'Reason for rejection (optional):',
+        async (reason) => {
+            try {
+                await fetch(`/api/print-request/${id}/reject`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason })
+                });
+                showNotification('❌ Request rejected', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+                showNotification('❌ Error rejecting request', 'error');
+            }
+        }
+    );
+}
+
+// ============================================================================
+// USER ACTIONS
+// ============================================================================
+async function copyRequestSkus(id) {
+    try {
+        const res = await fetch(`/api/print-request/${id}/skus`);
+        const data = await res.json();
+        if (data.success && data.skus) {
+            // Format with quantities
+            const text = data.skus.map(item => {
+                const qty = item.qty || 1;
+                return `${item.sku}\t${qty}`;
+            }).join('\n');
+            
+            await navigator.clipboard.writeText(text);
+            await fetch(`/api/print-request/${id}/printed`, { method: 'POST' });
+            showNotification(`📋 Copied ${data.skus.length} SKUs with quantities`, 'success');
+            setTimeout(() => location.reload(), 1500);
+        }
+    } catch (error) {
+        showNotification('❌ Error copying SKUs', 'error');
+    }
+}
+
+async function downloadRequestSkus(id) {
+    try {
+        const res = await fetch(`/api/print-request/${id}/skus`);
+        const data = await res.json();
+        if (data.success && data.skus) {
+            // Format with quantities
+            let content = 'SKU\tQuantity\n';
+            data.skus.forEach(item => {
+                const qty = item.qty || 1;
+                content += `${item.sku}\t${qty}\n`;
+            });
+            
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `print-request-${id}-with-qty.txt`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+            await fetch(`/api/print-request/${id}/printed`, { method: 'POST' });
+            showNotification(`📥 Downloaded ${data.skus.length} SKUs with quantities`, 'success');
+            setTimeout(() => location.reload(), 1500);
+        }
+    } catch (error) {
+        showNotification('❌ Error downloading SKUs', 'error');
+    }
+}
+
+async function markCompleted(id) {
+    showConfirmModal(
+        'Mark as Completed',
+        'Have you finished printing these SKUs?',
+        async () => {
+            try {
+                await fetch(`/api/print-request/${id}/complete`, { method: 'POST' });
+                showNotification('✅ Request marked as completed', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+                showNotification('❌ Error completing request', 'error');
+            }
+        }
+    );
+}
+
+// ============================================================================
+// VIEW REQUEST WITH PROPER SKU FORMAT - CUSTOM MODAL
+// ============================================================================
+function viewRequest(id) {
+    fetch(`/api/print-request/${id}/skus`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success && data.skus) {
+                // Calculate total quantity
+                const totalQty = data.skus.reduce((sum, item) => sum + (item.qty || 1), 0);
+                
+                // Create modal overlay
+                const modalOverlay = document.createElement('div');
+                modalOverlay.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background-color: rgba(0, 0, 0, 0.5);
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    z-index: 10000;
+                    backdrop-filter: blur(4px);
+                    animation: fadeIn 0.3s ease;
+                `;
+                
+                // Create modal content
+                const modalContent = document.createElement('div');
+                modalContent.style.cssText = `
+                    background: white;
+                    border-radius: 1rem;
+                    padding: 2rem;
+                    max-width: 600px;
+                    width: 90%;
+                    max-height: 80vh;
+                    overflow-y: auto;
+                    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+                    animation: slideDown 0.3s ease;
+                `;
+                
+                // Create SKU list HTML
+                let skuHtml = '';
+                data.skus.forEach((item, index) => {
+                    const qty = item.qty || 1;
+                    skuHtml += `
+                        <tr>
+                            <td style="padding: 0.5rem; border-bottom: 1px solid var(--border); text-align: center;">${index + 1}</td>
+                            <td style="padding: 0.5rem; border-bottom: 1px solid var(--border); font-family: monospace;">${item.sku}</td>
+                            <td style="padding: 0.5rem; border-bottom: 1px solid var(--border); text-align: center;">${qty}</td>
+                        </tr>
+                    `;
+                });
+                
+                modalContent.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid var(--border);">
+                        <h3 style="margin: 0; color: var(--text-dark);">📋 SKU List</h3>
+                        <button onclick="this.closest('.modal-overlay').remove()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-light);">&times;</button>
+                    </div>
+                    <div style="margin-bottom: 1.5rem;">
+                        <p><strong>Request ID:</strong> ${id}</p>
+                        <p><strong>Total Items:</strong> ${data.skus.length}</p>
+                        <p><strong>Total Quantity:</strong> ${totalQty}</p>
+                    </div>
+                    <div style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 0.5rem;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead style="background: var(--primary-color); color: white; position: sticky; top: 0;">
+                                <tr>
+                                    <th style="padding: 0.75rem; text-align: left;">#</th>
+                                    <th style="padding: 0.75rem; text-align: left;">SKU</th>
+                                    <th style="padding: 0.75rem; text-align: center;">QTY</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${skuHtml}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
+                        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+                    </div>
+                `;
+                
+                modalOverlay.className = 'modal-overlay';
+                modalOverlay.appendChild(modalContent);
+                document.body.appendChild(modalOverlay);
+                
+                // Close on click outside
+                modalOverlay.addEventListener('click', (e) => {
+                    if (e.target === modalOverlay) modalOverlay.remove();
+                });
+            }
+        });
+}
+
+// ============================================================================
+// CSV EXPORT FUNCTIONS WITH QUANTITIES
+// ============================================================================
+async function exportPendingToCSV() {
+    showNotification('Preparing export...', 'info');
+    
+    try {
+        const response = await fetch('/api/export-requests/pending');
+        const data = await response.json();
+        
+        if (data.success && data.requests && data.requests.length > 0) {
+            let csvContent = 'Request ID,Requester,Role,Date,Items,Total QTY,SKU List (SKU:QTY),Purpose\n';
+            
+            data.requests.forEach(request => {
+                const skuList = request.sku_list ? request.sku_list.map(item => `${item.sku}:${item.qty || 1}`).join('; ') : '';
+                const totalQty = request.sku_list ? request.sku_list.reduce((sum, item) => sum + (item.qty || 1), 0) : 0;
+                csvContent += `"${request.request_id}","${request.requested_by}","${request.role}","${request.date}",${request.sku_count},${totalQty},"${skuList}","${request.notes || ''}"\n`;
+            });
+            
+            downloadCSV(csvContent, 'pending_requests_with_quantities.csv');
+            showNotification('📥 Exported pending requests with quantities', 'success');
+        } else {
+            showNotification('No pending requests to export', 'warning');
+        }
+    } catch (error) {
+        console.error('Export error:', error);
+        showNotification('Error exporting data', 'error');
+    }
+}
+
+async function exportApprovedToCSV() {
+    showNotification('Preparing export...', 'info');
+    
+    try {
+        const response = await fetch('/api/export-requests/approved');
+        const data = await response.json();
+        
+        if (data.success && data.requests && data.requests.length > 0) {
+            let csvContent = 'Request ID,Requester,Role,Approved By,Approved Date,Items,Total QTY,SKU List (SKU:QTY)\n';
+            
+            data.requests.forEach(request => {
+                const skuList = request.sku_list ? request.sku_list.map(item => `${item.sku}:${item.qty || 1}`).join('; ') : '';
+                const totalQty = request.sku_list ? request.sku_list.reduce((sum, item) => sum + (item.qty || 1), 0) : 0;
+                csvContent += `"${request.request_id}","${request.requested_by}","${request.role}","${request.approved_by || ''}","${request.approved_date || ''}",${request.sku_count},${totalQty},"${skuList}"\n`;
+            });
+            
+            downloadCSV(csvContent, 'approved_requests_with_quantities.csv');
+            showNotification('📥 Exported approved requests with quantities', 'success');
+        } else {
+            showNotification('No approved requests to export', 'warning');
+        }
+    } catch (error) {
+        console.error('Export error:', error);
+        showNotification('Error exporting data', 'error');
+    }
+}
+
+async function exportPrintedToCSV() {
+    showNotification('Preparing export...', 'info');
+    
+    try {
+        const response = await fetch('/api/export-requests/printed');
+        const data = await response.json();
+        
+        if (data.success && data.requests && data.requests.length > 0) {
+            let csvContent = 'Request ID,Requester,Printed By,Printed At,Items,Total QTY,SKU List (SKU:QTY),Downloads\n';
+            
+            data.requests.forEach(request => {
+                const skuList = request.sku_list ? request.sku_list.map(item => `${item.sku}:${item.qty || 1}`).join('; ') : '';
+                const totalQty = request.sku_list ? request.sku_list.reduce((sum, item) => sum + (item.qty || 1), 0) : 0;
+                csvContent += `"${request.request_id}","${request.requested_by}","${request.printed_by || ''}","${request.printed_at || ''}",${request.sku_count},${totalQty},"${skuList}",${request.download_count}\n`;
+            });
+            
+            downloadCSV(csvContent, 'active_jobs_with_quantities.csv');
+            showNotification('📥 Exported active jobs with quantities', 'success');
+        } else {
+            showNotification('No active jobs to export', 'warning');
+        }
+    } catch (error) {
+        console.error('Export error:', error);
+        showNotification('Error exporting data', 'error');
+    }
+}
+
+// ============================================================================
+// EXPORT SINGLE REQUEST TO CSV - FIXED VERSION
+// ============================================================================
+window.exportSingleRequestToCSV = async function(requestId) {
+    showNotification('Preparing export...', 'info');
+    
+    try {
+        // Get request details
+        const detailsResponse = await fetch(`/api/print-request/${requestId}/details`);
+        if (!detailsResponse.ok) {
+            throw new Error(`Failed to fetch details: ${detailsResponse.status}`);
+        }
+        const details = await detailsResponse.json();
+        
+        // Get SKU list
+        const skusResponse = await fetch(`/api/print-request/${requestId}/skus`);
+        if (!skusResponse.ok) {
+            throw new Error(`Failed to fetch SKUs: ${skusResponse.status}`);
+        }
+        const skusData = await skusResponse.json();
+        
+        if (skusData.success && skusData.skus && skusData.skus.length > 0) {
+            // Calculate total quantity
+            const totalQty = skusData.skus.reduce((sum, item) => sum + (item.qty || 1), 0);
+            
+            // Create CSV content with proper formatting
+            let csvContent = 'Request ID,Requester,Role,Date,Total Items,Total Quantity\n';
+            csvContent += `"${details.request_id || requestId}","${details.requested_by || ''}","${details.requested_by_role || ''}","${details.requested_at || ''}",${skusData.skus.length},${totalQty}\n\n`;
+            
+            // Add SKU list header
+            csvContent += 'SKU LIST\n';
+            csvContent += 'No.,SKU,Quantity\n';
+            
+            // Add each SKU on its own row
+            skusData.skus.forEach((item, index) => {
+                const sku = item.sku || (typeof item === 'string' ? item : '');
+                const qty = item.qty || 1;
+                csvContent += `${index + 1},"${sku}",${qty}\n`;
+            });
+            
+            // Add notes if any
+            if (details.notes) {
+                csvContent += `\nNotes: ${details.notes}\n`;
+            }
+            
+            // Download the file
+            downloadCSV(csvContent, `print-request-${requestId}.csv`);
+            showNotification(`📥 Exported request ${requestId}`, 'success');
+        } else {
+            showNotification('No SKUs found for this request', 'warning');
+        }
+    } catch (error) {
+        console.error('Export error:', error);
+        showNotification('❌ Error exporting request: ' + error.message, 'error');
+    }
+};
+
+// ============================================================================
+// DOWNLOAD CSV HELPER
+// ============================================================================
+function downloadCSV(csvContent, filename) {
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+// ============================================================================
+// ADD CSS ANIMATIONS
+// ============================================================================
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes slideDown {
+        from {
+            transform: translateY(-50px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+    @keyframes slideInRight {
+        from {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    @keyframes slideOutRight {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+    }
+    .spinner {
+        display: inline-block;
+        width: 1rem;
+        height: 1rem;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: white;
+        animation: spin 0.8s linear infinite;
+        margin-right: 0.5rem;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+`;
+document.head.appendChild(style);
+
+// ============================================================================
+// EXPORT SINGLE REQUEST TO CSV - WITH PROPER SKU FORMAT
+// ============================================================================
+async function exportSingleRequestToCSV(requestId) {
+    showNotification('Preparing export...', 'info');
+    
+    try {
+        // Get request details
+        const detailsResponse = await fetch(`/api/print-request/${requestId}/details`);
+        const details = await detailsResponse.json();
+        
+        // Get SKU list
+        const skusResponse = await fetch(`/api/print-request/${requestId}/skus`);
+        const skusData = await skusResponse.json();
+        
+        if (skusData.success && skusData.skus) {
+            // Calculate total quantity
+            const totalQty = skusData.skus.reduce((sum, item) => sum + (item.qty || 1), 0);
+            
+            // Create CSV content with proper formatting
+            let csvContent = 'Request ID,Requester,Role,Date,Total Items,Total Quantity\n';
+            csvContent += `"${details.request_id}","${details.requested_by}","${details.requested_by_role}","${details.requested_at}",${skusData.skus.length},${totalQty}\n\n`;
+            
+            // Add SKU list header
+            csvContent += 'SKU LIST\n';
+            csvContent += 'No.,SKU,Quantity\n';
+            
+            // Add each SKU on its own row
+            skusData.skus.forEach((item, index) => {
+                const qty = item.qty || 1;
+                csvContent += `${index + 1},"${item.sku}",${qty}\n`;
+            });
+            
+            // Add notes if any
+            if (details.notes) {
+                csvContent += `\nNotes: ${details.notes}\n`;
+            }
+            
+            // Download the file
+            downloadCSV(csvContent, `print-request-${requestId}.csv`);
+            showNotification(`📥 Exported request ${requestId}`, 'success');
+        }
+    } catch (error) {
+        console.error('Export error:', error);
+        showNotification('❌ Error exporting request', 'error');
+    }
+}
+
+function downloadCSV(csvContent, filename) {
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    window.URL.revokeObjectURL(url);
+}
+
+// ============================================================================
+// MAKE FUNCTIONS GLOBALLY AVAILABLE
+// ============================================================================
+window.exportSingleRequestToCSV = window.exportSingleRequestToCSV;
+window.downloadCSV = downloadCSV;
+</script>
+{% endblock %}

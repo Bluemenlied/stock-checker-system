@@ -28,17 +28,31 @@
                 <span class="navbar-title">{{ system_name }}</span>
             </div>
             <div class="navbar-menu">
+                <!-- Dashboard - Visible to ALL users -->
                 <a href="{{ url_for('dashboard') }}" class="navbar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
                     Dashboard
                 </a>
-                {% if session.role in ['admin', 'staff'] %}
+                
+                <!-- Features for ALL logged-in users (admin, staff, viewer) -->
+                {% if session.role in ['admin', 'staff', 'viewer'] %}
                 <a href="{{ url_for('compare') }}" class="navbar-link {% if request.endpoint == 'compare' %}active{% endif %}">
                     Compare SKU
                 </a>
+                
+                <a href="{{ url_for('bulk_search') }}" class="navbar-link {% if request.endpoint == 'bulk_search' %}active{% endif %}">
+                    Bulk Search
+                </a>
+                
+                <a href="{{ url_for('print_request_page') }}" class="navbar-link {% if request.endpoint == 'print_request_page' %}active{% endif %}">
+                    Print Request
+                </a>
+                
                 <a href="{{ url_for('upload_file') }}" class="navbar-link {% if request.endpoint == 'upload_file' %}active{% endif %}">
                     Upload Stock
                 </a>
                 {% endif %}
+                
+                <!-- Admin-only features -->
                 {% if session.role == 'admin' %}
                 <a href="{{ url_for('view_logs') }}" class="navbar-link {% if request.endpoint == 'view_logs' %}active{% endif %}">
                     Activity Logs
@@ -47,15 +61,20 @@
                     Settings
                 </a>
                 {% endif %}
+                
+                <!-- Common features for ALL users -->
                 <a href="{{ url_for('change_password') }}" class="navbar-link">
                     Change Password
                 </a>
+                
                 <a href="{{ url_for('logout') }}" class="navbar-link" style="color: var(--danger-color);">
                     Logout
                 </a>
+                
+                <!-- User info badge -->
                 <span class="user-info">
                     <span>👤</span>
-                    <span>{{ session.full_name }} ({{ session.role }})</span>
+                    <span>{{ session.full_name }} ({{ session.role|upper }})</span>
                 </span>
             </div>
         </div>

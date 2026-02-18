@@ -2,6 +2,7 @@ from database import db
 from datetime import datetime
 import hashlib
 import secrets
+import json  # Added missing import
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -88,7 +89,7 @@ class ActivityLog(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 # ============================================================================
-# NEW SETTINGS MODEL FOR PERSISTENT CONFIGURATION
+# SETTINGS MODEL FOR PERSISTENT CONFIGURATION
 # ============================================================================
 class Settings(db.Model):
     __tablename__ = 'settings'
@@ -101,3 +102,47 @@ class Settings(db.Model):
     warning_color = db.Column(db.String, default='#d97706')
     danger_color = db.Column(db.String, default='#dc2626')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class PrintRequest(db.Model):
+    __tablename__ = 'print_requests'
+    
+    id = db.Column(db.UUID, primary_key=True, server_default=db.text('gen_random_uuid()'))
+    request_id = db.Column(db.String, unique=True, nullable=False)
+    requested_by = db.Column(db.String, nullable=False)
+    requested_by_id = db.Column(db.String, nullable=False)
+    requested_by_role = db.Column(db.String, nullable=False, default='viewer')
+    requested_at = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String, default='pending')
+    sku_list = db.Column(db.Text, nullable=False)  # JSON array of objects [{sku: "...", qty: n}]
+    sku_count = db.Column(db.Integer, nullable=False)
+    notes = db.Column(db.Text)
+    approved_by = db.Column(db.String)
+    approved_at = db.Column(db.DateTime)
+    printed_at = db.Column(db.DateTime)
+    printed_by = db.Column(db.String)
+    download_count = db.Column(db.Integer, default=0)
+    completed_at = db.Column(db.DateTime)
+    completed_by = db.Column(db.String)
+    source_type = db.Column(db.String)
+    source_file_id = db.Column(db.UUID, db.ForeignKey('files.id'))
+    source_file = db.relationship('File')
+    
+    @staticmethod
+    def generate_request_id():
+        from datetime import datetime
+        today = datetime.utcnow().strftime('%Y%m%d')
+        count = PrintRequest.query.filter(
+            db.func.date(PrintRequest.requested_at) == datetime.utcnow().date()
+        ).count() + 1
+        return f"PR-{today}-{count:04d}"
+    
+    def get_sku_list(self):
+        """Return the SKU list as a Python list of objects with sku and qty"""
+        if self.sku_list:
+            return json.loads(self.sku_list)
+        return []
+    
+    def set_sku_list(self, skus):
+        """Store SKU list as JSON array of objects with sku and qty"""
+        self.sku_list = json.dumps(skus)
+        self.sku_count = len(skus)

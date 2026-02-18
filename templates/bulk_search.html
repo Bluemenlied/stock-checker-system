@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="bulk-search-page">
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Bulk SKU Search</h2>
+        </div>
+        
+        <div class="upload-section" style="margin-bottom: 2rem;">
+            <h3 style="margin-bottom: 1rem;">Upload Excel File with SKUs</h3>
+            <p style="color: var(--text-light); margin-bottom: 1rem;">
+                Upload an Excel file containing a list of SKUs to search. The file should have a column named "SKU".
+            </p>
+            
+            <form id="bulkSearchForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="bulkFile" class="form-label">Select Excel File:</label>
+                    <input type="file" 
+                           id="bulkFile" 
+                           name="file" 
+                           class="form-control" 
+                           accept=".xlsx,.xls"
+                           required>
+                    <small style="color: var(--text-light); display: block; margin-top: 0.5rem;">
+                        File must contain an "SKU" column
+                    </small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="searchFile" class="form-label">Search in Inventory Date:</label>
+                    <select id="searchFile" name="file_id" class="form-control" required>
+                        <option value="">-- Select inventory file --</option>
+                        {% for file in available_files %}
+                        <option value="{{ file.id }}" {% if loop.index == 1 %}selected{% endif %}>
+                            {{ file.display_date }} ({{ file.record_count }} items)
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">🔍 Bulk Search</button>
+                <button type="button" class="btn btn-outline" onclick="resetBulkSearch()">Reset</button>
+            </form>
+        </div>
+        
+        <!-- Results Section (Initially Hidden) -->
+        <div id="resultsSection" style="display: none;">
+            <div class="card-header" style="margin-top: 2rem;">
+                <h3 class="card-title">Search Results</h3>
+                <div>
+                    <button class="btn btn-outline" onclick="copyAllSkus()">📋 Copy All SKUs</button>
+                    <button class="btn btn-outline" onclick="downloadResults()">📥 Download CSV</button>
+                </div>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="data-table" id="resultsTable">
+                    <thead>
+                        <tr>
+                            <th>SKU</th>
+                            <th>Description</th>
+                            <th>Category</th>
+                            <th>Status</th>
+                            <th>Available</th>
+                            <th>Container</th>
+                            <th>Last Count</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsBody">
+                    </tbody>
+                </table>
+            </div>
+            
+            <div id="noResults" style="text-align: center; padding: 3rem; color: var(--text-light); display: none;">
+                No SKUs found in the selected inventory file.
+            </div>
+            
+            <div id="notFoundSection" style="margin-top: 2rem; display: none;">
+                <h4 style="color: var(--warning-color);">SKUs Not Found:</h4>
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>SKU Not Found</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="notFoundBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentResults = [];
+let notFoundSkus = [];
+
+document.getElementById('bulkSearchForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData();
+    const file = document.getElementById('bulkFile').files[0];
+    const fileId = document.getElementById('searchFile').value;
+    
+    if (!file || !fileId) {
+        showNotification('Please select both file and inventory date', 'warning');
+        return;
+    }
+    
+    formData.append('file', file);
+    formData.append('file_id', fileId);
+    
+    // Show loading
+    showNotification('🔍 Processing bulk search...', 'info');
+    
+    try {
+        const response = await fetch('/bulk-search', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            currentResults = data.found;
+            notFoundSkus = data.not_found;
+            displayResults(data.found, data.not_found);
+            showNotification(`Found ${data.found.length} SKUs, ${data.not_found.length} not found`, 'success');
+        } else {
+            showNotification('Error: ' + data.error, 'error');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showNotification('Failed to process bulk search', 'error');
+    }
+});
+
+function displayResults(found, notFound) {
+    document.getElementById('resultsSection').style.display = 'block';
+    
+    const resultsBody = document.getElementById('resultsBody');
+    const notFoundBody = document.getElementById('notFoundBody');
+    const noResults = document.getElementById('noResults');
+    const notFoundSection = document.getElementById('notFoundSection');
+    
+    // Display found SKUs
+    if (found.length > 0) {
+        resultsBody.innerHTML = found.map(item => `
+            <tr>
+                <td>
+                    <span id="result-sku-${item.id}">${item.sku}</span>
+                    <button class="copy-btn" onclick="copySku('${item.sku}')">Copy</button>
+                </td>
+                <td>${item.description || ''}</td>
+                <td>${item.category || ''}</td>
+                <td>
+                    <span class="status-badge status-${item.stock_level}">
+                        ${item.stock_level === 'in_stock' ? '✅ IN STOCK' : 
+                          item.stock_level === 'low_stock' ? '⚠️ LOW STOCK' : '❌ OUT OF STOCK'}
+                    </span>
+                </td>
+                <td style="font-weight: 600;">${item.available_stock}</td>
+                <td>
+                    ${item.total_container_qty > 0 ? 
+                      `<button class="btn btn-icon view-container-btn" 
+                               onclick="showContainerModal('${item.sku}', '${item.container_details || ''}', ${item.total_container_qty})">
+                          📦 ${item.total_container_qty} units
+                       </button>` : 
+                      '0'}
+                </td>
+                <td>${item.last_count_date || ''}</td>
+                <td>
+                    <a href="/compare?sku=${item.sku}" class="btn btn-outline btn-icon">Compare</a>
+                </td>
+            </tr>
+        `).join('');
+    } else {
+        resultsBody.innerHTML = '';
+        noResults.style.display = 'block';
+    }
+    
+    // Display not found SKUs
+    if (notFound.length > 0) {
+        notFoundSection.style.display = 'block';
+        notFoundBody.innerHTML = notFound.map(sku => `
+            <tr>
+                <td><span id="notfound-${sku}">${sku}</span></td>
+                <td>
+                    <button class="copy-btn" onclick="copySku('${sku}')">Copy</button>
+                </td>
+            </tr>
+        `).join('');
+    } else {
+        notFoundSection.style.display = 'none';
+    }
+}
+
+function copySku(sku) {
+    navigator.clipboard.writeText(sku).then(() => {
+        showNotification(`📋 Copied: ${sku}`, 'success');
+    });
+}
+
+function copyAllSkus() {
+    const allSkus = currentResults.map(item => item.sku).join('\n');
+    navigator.clipboard.writeText(allSkus).then(() => {
+        showNotification(`📋 Copied ${currentResults.length} SKUs`, 'success');
+    });
+}
+
+function downloadResults() {
+    const csv = [
+        ['SKU', 'Description', 'Category', 'Status', 'Available Stock', 'Container Qty', 'Last Count Date'].join(','),
+        ...currentResults.map(item => [
+            item.sku,
+            `"${item.description || ''}"`,
+            `"${item.category || ''}"`,
+            item.stock_level,
+            item.available_stock,
+            item.total_container_qty,
+            item.last_count_date || ''
+        ].join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'bulk_search_results.csv';
+    a.click();
+    window.URL.revokeObjectURL(url);
+    
+    showNotification('📥 Results downloaded', 'success');
+}
+
+function resetBulkSearch() {
+    document.getElementById('bulkFile').value = '';
+    document.getElementById('resultsSection').style.display = 'none';
+    currentResults = [];
+    notFoundSkus = [];
+}
+</script>
+{% endblock %}
