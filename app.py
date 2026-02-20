@@ -668,7 +668,12 @@ def parse_excel_file(file_path, filename):
     """Parse Excel file and save to PostgreSQL"""
     try:
         import pandas as pd
+        import numpy as np
         import re
+        
+        print(f"📊 Processing file: {filename}")
+        print(f"📦 NumPy version: {np.__version__}")
+        print(f"🐼 Pandas version: {pd.__version__}")
         
         # Extract date from filename
         date_match = re.search(r'CheckStockTempFile_(\d{2}-\d{2}-\d{2})', filename)
@@ -678,8 +683,18 @@ def parse_excel_file(file_path, filename):
         file_date_str = date_match.group(1)
         file_date = datetime.strptime(file_date_str, '%m-%d-%y')
         
-        # Read Excel file
-        df = pd.read_excel(file_path)
+        # Read Excel file with error handling
+        try:
+            # Try with different engines to avoid compatibility issues
+            df = pd.read_excel(file_path, engine='openpyxl')
+        except Exception as e:
+            try:
+                # Fallback to default engine
+                df = pd.read_excel(file_path)
+            except Exception as e2:
+                return False, f"Could not read Excel file: {str(e2)}"
+        
+        print(f"✅ Excel loaded: {len(df)} rows, {len(df.columns)} columns")
         
         # Required columns
         required_columns = [
@@ -689,7 +704,12 @@ def parse_excel_file(file_path, filename):
             'BufferQty'
         ]
         
-        missing_columns = [col for col in required_columns if col not in df.columns]
+        # Check which columns are actually present
+        missing_columns = []
+        for col in required_columns:
+            if col not in df.columns:
+                missing_columns.append(col)
+        
         if missing_columns:
             return False, f"Missing columns: {missing_columns}"
         
@@ -704,8 +724,11 @@ def parse_excel_file(file_path, filename):
         db.session.add(new_file)
         db.session.flush()
         
-        # Process rows
-        for _, row in df.iterrows():
+        # Process rows with batch insert for better performance
+        batch_size = 500
+        items_to_insert = []
+        
+        for idx, row in df.iterrows():
             if pd.isna(row['SKU']) or str(row['SKU']).strip() == '':
                 continue
             
@@ -754,15 +777,26 @@ def parse_excel_file(file_path, filename):
                 inventory_remark=str(row.get('InventoryRemark', '')).strip(),
                 file_date=file_date
             )
-            db.session.add(inventory_item)
+            
+            items_to_insert.append(inventory_item)
+            
+            # Batch insert to avoid memory issues
+            if len(items_to_insert) >= batch_size:
+                db.session.bulk_save_objects(items_to_insert)
+                items_to_insert = []
+        
+        # Insert remaining items
+        if items_to_insert:
+            db.session.bulk_save_objects(items_to_insert)
         
         db.session.commit()
         
         # Clean up uploaded file
         try:
             os.remove(file_path)
-        except:
-            pass
+            print(f"✅ Temporary file deleted: {file_path}")
+        except Exception as e:
+            print(f"⚠️ Could not delete temp file: {e}")
         
         return True, {
             'file_id': str(new_file.id),
@@ -770,11 +804,17 @@ def parse_excel_file(file_path, filename):
             'file_date': file_date.strftime('%Y-%m-%d')
         }
         
+    except ImportError as e:
+        db.session.rollback()
+        print(f"❌ Import error: {e}")
+        return False, f"Missing required library: {str(e)}. Run: pip install pandas openpyxl"
+        
     except Exception as e:
         db.session.rollback()
         import traceback
+        print("❌ ERROR DETAILS:")
         print(traceback.format_exc())
-        return False, str(e)
+        return False, f"Error processing file: {str(e)}"
 
 # ============================================================================
 # DELETE FILE ROUTE - VERIFIED WORKING
